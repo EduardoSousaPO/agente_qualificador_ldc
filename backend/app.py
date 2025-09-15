@@ -1,0 +1,395 @@
+"""
+Flask Backend - Agente Qualificador de Leads via WhatsApp
+Sistema completo de qualificação automática com IA
+"""
+import os
+import json
+from datetime import datetime
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from dotenv import load_dotenv
+import logging
+import structlog
+
+# Imports dos serviços
+from backend.models.database_models import (
+    DatabaseConnection, Lead, Session, Message, Qualificacao, SystemLog,
+    LeadRepository, SessionRepository, MessageRepository, QualificacaoRepository, SystemLogRepository
+)
+from backend.services.scoring_service import ScoringService
+from backend.services.whatsapp_service import WhatsAppService
+from backend.services.qualification_service import QualificationService
+from backend.services.lead_detector import LeadDetectorService
+
+# Configuração de logging estruturado
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+
+logger = structlog.get_logger()
+
+# Carregar variáveis de ambiente
+load_dotenv()
+
+# Inicializar Flask
+app = Flask(__name__)
+CORS(app)
+
+# Configurações
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
+app.config['DEBUG'] = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+
+# Inicializar serviços
+try:
+    db = DatabaseConnection()
+    lead_repo = LeadRepository(db)
+    session_repo = SessionRepository(db)
+    message_repo = MessageRepository(db)
+    qualificacao_repo = QualificacaoRepository(db)
+    log_repo = SystemLogRepository(db)
+    
+    scoring_service = ScoringService()
+    whatsapp_service = WhatsAppService()
+    qualification_service = QualificationService(
+        session_repo, message_repo, qualificacao_repo, scoring_service, whatsapp_service
+    )
+    lead_detector = LeadDetectorService(lead_repo, whatsapp_service, qualification_service)
+    
+    logger.info("Serviços inicializados com sucesso")
+except Exception as e:
+    logger.error("Erro ao inicializar serviços", error=str(e))
+    raise
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Endpoint de health check"""
+    try:
+        # Testar conexão com banco
+        db.get_client().table('leads').select('id').limit(1).execute()
+        
+        return jsonify({
+            'status': 'healthy',
+            'timestamp': datetime.utcnow().isoformat(),
+            'services': {
+                'database': 'connected',
+                'whatsapp': 'configured',
+                'scoring': 'ready',
+                'qualification': 'ready'
+            }
+        }), 200
+    except Exception as e:
+        logger.error("Health check falhou", error=str(e))
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 500
+
+
+@app.route('/webhook', methods=['POST'])
+def webhook_whatsapp():
+    """Webhook para receber mensagens do WAHA"""
+    try:
+        data = request.get_json()
+        logger.info("Webhook recebido", data=data)
+        
+        # Validar estrutura da mensagem
+        if not data or 'from' not in data or 'body' not in data:
+            logger.warning("Webhook com estrutura inválida", data=data)
+            return jsonify({'status': 'invalid_data'}), 400
+        
+        telefone = data['from']
+        mensagem = data['body']
+        
+        # Buscar ou criar lead
+        lead_data = lead_repo.get_lead_by_phone(telefone)
+        
+        if not lead_data:
+            # Lead não encontrado - pode ser resposta a uma mensagem nossa
+            logger.info("Mensagem de número não cadastrado", telefone=telefone)
+            return jsonify({'status': 'lead_not_found'}), 200
+        
+        # Processar mensagem recebida
+        resultado = qualification_service.processar_mensagem_recebida(
+            lead_data['id'], mensagem
+        )
+        
+        if resultado['success']:
+            logger.info("Mensagem processada com sucesso", 
+                       lead_id=lead_data['id'], 
+                       resultado=resultado)
+        else:
+            logger.error("Erro ao processar mensagem", 
+                        lead_id=lead_data['id'], 
+                        error=resultado.get('error'))
+        
+        return jsonify({'status': 'processed', 'result': resultado}), 200
+        
+    except Exception as e:
+        logger.error("Erro no webhook", error=str(e))
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/leads', methods=['GET'])
+def listar_leads():
+    """Lista todos os leads"""
+    try:
+        # Buscar leads com paginação
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 50, type=int)
+        status = request.args.get('status')
+        
+        # Query base
+        query = db.get_client().table('leads').select('*')
+        
+        # Filtrar por status se especificado
+        if status:
+            query = query.eq('status', status)
+        
+        # Aplicar paginação e ordenação
+        offset = (page - 1) * limit
+        result = query.order('created_at', desc=True).range(offset, offset + limit - 1).execute()
+        
+        return jsonify({
+            'leads': result.data,
+            'page': page,
+            'limit': limit,
+            'total': len(result.data)
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao listar leads", error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/leads/<lead_id>', methods=['GET'])
+def obter_lead(lead_id):
+    """Obtém detalhes de um lead específico"""
+    try:
+        # Buscar lead
+        lead_result = db.get_client().table('leads').select('*').eq('id', lead_id).execute()
+        
+        if not lead_result.data:
+            return jsonify({'error': 'Lead não encontrado'}), 404
+        
+        lead = lead_result.data[0]
+        
+        # Buscar sessões do lead
+        sessions_result = db.get_client().table('sessions').select('*').eq('lead_id', lead_id).execute()
+        
+        # Buscar qualificação se existir
+        qual_result = db.get_client().table('qualificacoes').select('*').eq('lead_id', lead_id).execute()
+        
+        # Buscar mensagens recentes
+        messages_result = db.get_client().table('messages').select('*').eq('lead_id', lead_id).order('created_at', desc=True).limit(20).execute()
+        
+        return jsonify({
+            'lead': lead,
+            'sessions': sessions_result.data,
+            'qualification': qual_result.data[0] if qual_result.data else None,
+            'recent_messages': messages_result.data
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao obter lead", lead_id=lead_id, error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/leads/<lead_id>/requalify', methods=['POST'])
+def requalificar_lead(lead_id):
+    """Reinicia o processo de qualificação de um lead"""
+    try:
+        # Verificar se lead existe
+        lead_result = db.get_client().table('leads').select('*').eq('id', lead_id).execute()
+        
+        if not lead_result.data:
+            return jsonify({'error': 'Lead não encontrado'}), 404
+        
+        # Desativar sessões existentes
+        db.get_client().table('sessions').update({'ativa': False}).eq('lead_id', lead_id).execute()
+        
+        # Resetar status do lead
+        db.get_client().table('leads').update({
+            'status': 'novo',
+            'score': 0,
+            'processado': False
+        }).eq('id', lead_id).execute()
+        
+        # Iniciar nova qualificação
+        resultado = qualification_service.iniciar_qualificacao(lead_id)
+        
+        logger.info("Lead requalificado", lead_id=lead_id, resultado=resultado)
+        
+        return jsonify({'status': 'requalification_started', 'result': resultado}), 200
+        
+    except Exception as e:
+        logger.error("Erro ao requalificar lead", lead_id=lead_id, error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/stats', methods=['GET'])
+def estatisticas():
+    """Retorna estatísticas do sistema"""
+    try:
+        # Estatísticas de leads
+        total_leads = db.get_client().table('leads').select('id', count='exact').execute().count
+        
+        leads_qualificados = db.get_client().table('leads').select('id', count='exact').eq('status', 'qualificado').execute().count
+        
+        leads_nao_qualificados = db.get_client().table('leads').select('id', count='exact').eq('status', 'nao_qualificado').execute().count
+        
+        leads_em_qualificacao = db.get_client().table('leads').select('id', count='exact').eq('status', 'em_qualificacao').execute().count
+        
+        # Estatísticas por canal
+        canais_result = db.get_client().rpc('get_leads_by_canal').execute()
+        
+        # Score médio
+        score_result = db.get_client().rpc('get_average_score').execute()
+        
+        # Logs de erro recentes
+        error_logs = log_repo.get_error_logs(10)
+        
+        return jsonify({
+            'leads': {
+                'total': total_leads,
+                'qualificados': leads_qualificados,
+                'nao_qualificados': leads_nao_qualificados,
+                'em_qualificacao': leads_em_qualificacao,
+                'taxa_qualificacao': round((leads_qualificados / total_leads * 100), 2) if total_leads > 0 else 0
+            },
+            'canais': canais_result.data if canais_result.data else [],
+            'score_medio': score_result.data[0] if score_result.data else 0,
+            'erros_recentes': len(error_logs),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao obter estatísticas", error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/test-scoring', methods=['POST'])
+def testar_scoring():
+    """Endpoint para testar o algoritmo de scoring"""
+    try:
+        data = request.get_json()
+        
+        required_fields = ['patrimonio', 'objetivo', 'urgencia', 'interesse']
+        if not all(field in data for field in required_fields):
+            return jsonify({'error': 'Campos obrigatórios: patrimonio, objetivo, urgencia, interesse'}), 400
+        
+        # Calcular score
+        resultado = scoring_service.calcular_score_completo(
+            data['patrimonio'],
+            data['objetivo'],
+            data['urgencia'],
+            data['interesse']
+        )
+        
+        return jsonify({
+            'score_result': {
+                'patrimonio_pontos': resultado.patrimonio_pontos,
+                'objetivo_pontos': resultado.objetivo_pontos,
+                'urgencia_pontos': resultado.urgencia_pontos,
+                'interesse_pontos': resultado.interesse_pontos,
+                'score_total': resultado.score_total,
+                'resultado': resultado.resultado,
+                'observacoes': resultado.observacoes
+            }
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao testar scoring", error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/process-new-leads', methods=['POST'])
+def processar_novos_leads():
+    """Endpoint para processar novos leads da planilha"""
+    try:
+        # Detectar e processar novos leads
+        resultado = lead_detector.detectar_e_processar_novos_leads()
+        
+        logger.info("Processamento de novos leads concluído", resultado=resultado)
+        
+        return jsonify({
+            'status': 'completed',
+            'novos_leads': resultado.get('novos_leads', 0),
+            'processados': resultado.get('processados', 0),
+            'erros': resultado.get('erros', 0),
+            'detalhes': resultado.get('detalhes', [])
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao processar novos leads", error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/logs', methods=['GET'])
+def obter_logs():
+    """Obtém logs do sistema"""
+    try:
+        limit = request.args.get('limit', 100, type=int)
+        nivel = request.args.get('nivel', 'INFO')
+        
+        if nivel == 'ERROR':
+            logs = log_repo.get_error_logs(limit)
+        else:
+            logs = log_repo.get_recent_logs(limit)
+        
+        return jsonify({
+            'logs': logs,
+            'total': len(logs),
+            'nivel': nivel
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao obter logs", error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({'error': 'Endpoint não encontrado'}), 404
+
+
+@app.errorhandler(500)
+def internal_error(error):
+    logger.error("Erro interno do servidor", error=str(error))
+    return jsonify({'error': 'Erro interno do servidor'}), 500
+
+
+if __name__ == '__main__':
+    # Configurar logging para produção
+    if not app.config['DEBUG']:
+        logging.basicConfig(level=logging.INFO)
+    
+    # Log de inicialização
+    logger.info("Iniciando Agente Qualificador de Leads", 
+                host=os.getenv('FLASK_HOST', '0.0.0.0'),
+                port=int(os.getenv('FLASK_PORT', 5000)),
+                debug=app.config['DEBUG'])
+    
+    # Iniciar servidor
+    app.run(
+        host=os.getenv('FLASK_HOST', '0.0.0.0'),
+        port=int(os.getenv('FLASK_PORT', 5000)),
+        debug=app.config['DEBUG']
+    )
+
+
+
