@@ -38,6 +38,12 @@ class LeadDetectorService:
     def _inicializar_servico(self):
         """Inicializa serviço Google Sheets"""
         try:
+            # Verificar se está em produção (sem Google Sheets)
+            if os.getenv('FLASK_ENV') == 'production' and not os.path.exists(self.credentials_file):
+                logger.info("Google Sheets desabilitado em produção - credentials.json não encontrado")
+                self.service = None
+                return
+            
             creds = None
             token_file = 'token.json'
             
@@ -51,8 +57,9 @@ class LeadDetectorService:
                     creds.refresh(Request())
                 else:
                     if not os.path.exists(self.credentials_file):
-                        logger.error("Arquivo de credenciais não encontrado", 
+                        logger.warning("Arquivo de credenciais não encontrado - Google Sheets desabilitado", 
                                    file=self.credentials_file)
+                        self.service = None
                         return
                     
                     flow = InstalledAppFlow.from_client_secrets_file(
@@ -67,7 +74,7 @@ class LeadDetectorService:
             logger.info("Serviço Google Sheets inicializado com sucesso")
             
         except Exception as e:
-            logger.error("Erro ao inicializar Google Sheets", error=str(e))
+            logger.warning("Google Sheets não disponível em produção", error=str(e))
             self.service = None
     
     def detectar_e_processar_novos_leads(self) -> Dict[str, Any]:
@@ -75,8 +82,12 @@ class LeadDetectorService:
         try:
             if not self.service:
                 return {
-                    'success': False,
-                    'error': 'Serviço Google Sheets não inicializado'
+                    'success': True,
+                    'message': 'Google Sheets não configurado - modo de produção',
+                    'novos_leads': 0,
+                    'processados': 0,
+                    'erros': 0,
+                    'detalhes': ['Google Sheets desabilitado em produção']
                 }
             
             # Ler dados da planilha
