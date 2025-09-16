@@ -4,7 +4,7 @@ Gerencia o fluxo completo de qualificação via WhatsApp
 """
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import structlog
 
 from backend.models.database_models import Session, Message, Qualificacao, SystemLog
