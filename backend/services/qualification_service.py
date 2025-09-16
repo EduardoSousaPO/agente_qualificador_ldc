@@ -122,29 +122,57 @@ class QualificationService:
             sessao = self.session_repo.get_active_session(lead_id)
             
             if not sessao:
-                logger.info("Nenhuma sessão ativa, criando nova sessão", lead_id=lead_id)
-                # Criar nova sessão automaticamente
-                nova_sessao = Session(
-                    lead_id=lead_id,
-                    estado='inicio',
-                    contexto={},
-                    ativa=True
-                )
-                sessao_id = self.session_repo.create_session(nova_sessao)
-                sessao = self.session_repo.get_session(sessao_id)
+                # Verificar se há uma sessão criada recentemente (últimos 30 segundos)
+                # Isso previne condições de corrida quando o WAHA reenvia a mesma mensagem
+                sessao_recente = self.session_repo.get_recent_session(lead_id, 30)
                 
-                if not sessao:
-                    logger.error("Erro ao criar nova sessão", lead_id=lead_id)
-                    return {
-                        'success': False,
-                        'error': 'Erro ao criar sessão'
-                    }
-                
-                logger.info("Nova sessão criada", lead_id=lead_id, session_id=sessao_id)
+                if sessao_recente:
+                    logger.info("Sessão recente encontrada, reutilizando", 
+                               lead_id=lead_id, 
+                               session_id=sessao_recente['id'],
+                               session_age_seconds=30)
+                    sessao = sessao_recente
+                    
+                    # Ativar a sessão se não estiver ativa
+                    if not sessao.get('ativa', False):
+                        self.session_repo.update_session(sessao['id'], {'ativa': True})
+                        sessao['ativa'] = True
+                else:
+                    logger.info("Nenhuma sessão encontrada, criando nova sessão", lead_id=lead_id)
+                    # Criar nova sessão automaticamente
+                    nova_sessao = Session(
+                        lead_id=lead_id,
+                        estado='inicio',
+                        contexto={},
+                        ativa=True
+                    )
+                    sessao_id = self.session_repo.create_session(nova_sessao)
+                    sessao = self.session_repo.get_session(sessao_id)
+                    
+                    if not sessao:
+                        logger.error("Erro ao criar nova sessão", lead_id=lead_id)
+                        return {
+                            'success': False,
+                            'error': 'Erro ao criar sessão'
+                        }
+                    
+                    logger.info("Nova sessão criada", lead_id=lead_id, session_id=sessao_id)
             
             # Verificar timeout da sessão
             if self._verificar_timeout_sessao(sessao):
                 return self._processar_timeout_sessao(sessao, lead_id)
+            
+            # Verificar se a mesma mensagem já foi processada recentemente (últimos 10 segundos)
+            # Isso previne processamento duplicado de mensagens idênticas
+            if self._mensagem_ja_processada(sessao['id'], mensagem, 10):
+                logger.info("Mensagem duplicada detectada, ignorando", 
+                           lead_id=lead_id, 
+                           session_id=sessao['id'],
+                           mensagem=mensagem[:50])
+                return {
+                    'success': True,
+                    'message': 'Mensagem duplicada ignorada'
+                }
             
             # Registrar mensagem recebida
             self._registrar_mensagem(sessao['id'], lead_id, mensagem, 'recebida')
@@ -225,6 +253,23 @@ Vamos começar? 😊"""
         except Exception as e:
             logger.error("Erro ao processar início", lead_id=lead_id, error=str(e))
             return {'success': False, 'error': str(e)}
+    
+    def _mensagem_ja_processada(self, session_id: str, mensagem: str, segundos: int = 10) -> bool:
+        """Verifica se a mesma mensagem já foi processada recentemente"""
+        try:
+            from datetime import datetime, timedelta
+            
+            # Calcular timestamp limite
+            time_limit = datetime.now() - timedelta(seconds=segundos)
+            time_limit_str = time_limit.isoformat()
+            
+            # Buscar mensagens recentes idênticas na sessão
+            result = self.session_repo.db.table('messages').select('*').eq('session_id', session_id).eq('conteudo', mensagem).eq('tipo', 'recebida').gte('created_at', time_limit_str).execute()
+            
+            return len(result.data) > 0
+        except Exception as e:
+            logger.error("Erro ao verificar mensagem duplicada", error=str(e))
+            return False
     
     def _processar_saudacao(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
         """Processa resposta à saudação inicial"""

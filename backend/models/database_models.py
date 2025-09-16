@@ -218,6 +218,21 @@ class SessionRepository:
             self.log_error(f"Erro ao buscar sessão ativa: {str(e)}", {'lead_id': lead_id})
             return None
     
+    def get_recent_session(self, lead_id: str, seconds: int = 30) -> Optional[Dict[str, Any]]:
+        """Busca sessão criada recentemente para o lead (nos últimos X segundos)"""
+        try:
+            from datetime import datetime, timedelta
+            
+            # Calcular timestamp limite (30 segundos atrás)
+            time_limit = datetime.now() - timedelta(seconds=seconds)
+            time_limit_str = time_limit.isoformat()
+            
+            result = self.db.table('sessions').select('*').eq('lead_id', lead_id).gte('created_at', time_limit_str).order('created_at', desc=True).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            self.log_error(f"Erro ao buscar sessão recente: {str(e)}", {'lead_id': lead_id})
+            return None
+    
     def update_session(self, session_id: str, updates: Dict[str, Any]) -> bool:
         """Atualiza uma sessão"""
         try:
