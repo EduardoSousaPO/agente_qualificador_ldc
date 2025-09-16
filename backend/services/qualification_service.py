@@ -28,12 +28,17 @@ class QualificationService:
         
         self.timeout_sessao = int(os.getenv('TIMEOUT_SESSAO_MINUTOS', '60'))
         
-        # Estados humanizados - fluxo natural e consultivo
+        # Estados SPIN Selling - fluxo consultivo estruturado
         self.estados = [
-            'inicio',        # Cumprimento caloroso + saber se já investe
-            'saudacao',      # Qualificação (patrimônio, objetivo, prazo) - tom natural
-            'convencimento', # Explicar modelo fee-based + lidar com objeções
-            'agendamento',   # Fechamento com convite concreto
+            'inicio',        # Saudação + permissão para conversar
+            'situacao',      # SPIN-S: Descobrir cenário atual de investimentos
+            'patrimonio',    # SPIN-S+P: Qualificar faixa de patrimônio
+            'objetivo',      # SPIN-P+N: Entender metas e motivações
+            'prazo',         # SPIN-N: Urgência e horizonte temporal
+            'convencimento', # SPIN-P,I,N: Problemas, Implicações, Necessidade
+            'interesse',     # Testar interesse no diagnóstico
+            'agendamento',   # Marcar reunião específica
+            'educar',        # Nutrir lead não qualificado
             'finalizado'     # Processo concluído
         ]
     
@@ -307,20 +312,21 @@ Vamos começar? 😊"""
                     'contexto': contexto_atualizado
                 })
             
-            # Se chegou ao agendamento, marcar como qualificado
-            if resposta_ia.get('acao') == 'agendar':
+            # Processar ações baseadas na resposta da IA
+            acao = resposta_ia.get('acao')
+            
+            if acao == 'agendar':
+                # Lead qualificado - marcar reunião
                 self._finalizar_qualificacao(sessao, lead_id, 85)  # Score alto para agendamento
             
-            # Se finalizou sem agendamento
-            elif resposta_ia.get('acao') == 'finalizar':
-                # Score baseado no estado alcançado
-                score_final = 30  # Base
-                if sessao['estado'] == 'convencimento':
-                    score_final = 60  # Chegou ao convencimento
-                elif sessao['estado'] == 'agendamento':
-                    score_final = 75  # Chegou ao agendamento mas não confirmou
-                
-                self._finalizar_qualificacao(sessao, lead_id, resposta_ia.get('score_parcial', score_final))
+            elif acao == 'educar':
+                # Lead não qualificado - enviar para nutrição
+                self._finalizar_qualificacao(sessao, lead_id, 45)  # Score médio para nutrição
+            
+            elif acao == 'finalizar':
+                # Finalizar com score baseado no progresso
+                score_final = self._calcular_score_progressivo(sessao, resposta_ia.get('score_parcial', 0))
+                self._finalizar_qualificacao(sessao, lead_id, score_final)
             
             return {
                 'success': True,
@@ -384,6 +390,58 @@ Vamos começar? 😊"""
             
         except Exception as e:
             logger.error("Erro ao finalizar qualificação", error=str(e))
+    
+    def _calcular_score_progressivo(self, sessao: Dict[str, Any], score_ia: int) -> int:
+        """Calcula score baseado no progresso no funil SPIN"""
+        try:
+            estado_atual = sessao.get('estado', 'inicio')
+            contexto = sessao.get('contexto', {})
+            
+            # Score base por estado alcançado
+            scores_estado = {
+                'inicio': 10,
+                'situacao': 20,
+                'patrimonio': 35,  # Qualificou patrimônio (+30pts)
+                'objetivo': 50,    # Tem objetivo claro (+25pts)  
+                'prazo': 65,       # Definiu urgência (+25pts)
+                'convencimento': 70,  # Entendeu diferencial
+                'interesse': 75,   # Demonstrou interesse (+20pts)
+                'agendamento': 80, # Chegou ao agendamento
+                'educar': 45       # Não qualificado mas engajado
+            }
+            
+            score_base = scores_estado.get(estado_atual, 10)
+            
+            # Bonificações por informações coletadas
+            bonus = 0
+            if contexto.get('patrimonio_faixa'):
+                if 'milhão' in contexto['patrimonio_faixa'].lower():
+                    bonus += 15  # Patrimônio alto
+                elif '500' in contexto['patrimonio_faixa']:
+                    bonus += 10  # Patrimônio médio
+                else:
+                    bonus += 5   # Patrimônio base
+            
+            if contexto.get('objetivo') and len(contexto['objetivo']) > 10:
+                bonus += 10  # Objetivo bem definido
+                
+            if contexto.get('urgencia') == 'alta':
+                bonus += 10  # Urgência alta
+            
+            # Score final (máximo 100)
+            score_final = min(100, max(score_base + bonus, score_ia))
+            
+            logger.info("Score calculado", 
+                       estado=estado_atual, 
+                       score_base=score_base, 
+                       bonus=bonus, 
+                       score_final=score_final)
+            
+            return score_final
+            
+        except Exception as e:
+            logger.error("Erro ao calcular score progressivo", error=str(e))
+            return max(30, score_ia)  # Fallback
     
     def _processar_saudacao(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
         """Processa resposta à saudação inicial"""
