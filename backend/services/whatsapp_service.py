@@ -18,6 +18,7 @@ class WhatsAppService:
         self.base_url = os.getenv('WAHA_BASE_URL', 'http://localhost:3000')
         self.session_name = os.getenv('WAHA_SESSION_NAME', 'default')
         self.webhook_url = os.getenv('WAHA_WEBHOOK_URL')
+        self.api_key = os.getenv('WAHA_API_KEY')
         self.max_tentativas = int(os.getenv('MAX_TENTATIVAS_ENVIO', '3'))
         
         # Mensagens personalizadas por canal
