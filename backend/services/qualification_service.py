@@ -122,11 +122,25 @@ class QualificationService:
             sessao = self.session_repo.get_active_session(lead_id)
             
             if not sessao:
-                logger.warning("Nenhuma sessão ativa encontrada", lead_id=lead_id)
-                return {
-                    'success': False,
-                    'error': 'Nenhuma sessão ativa encontrada'
-                }
+                logger.info("Nenhuma sessão ativa, criando nova sessão", lead_id=lead_id)
+                # Criar nova sessão automaticamente
+                nova_sessao = Session(
+                    lead_id=lead_id,
+                    estado='inicio',
+                    contexto={},
+                    ativa=True
+                )
+                sessao_id = self.session_repo.create_session(nova_sessao)
+                sessao = self.session_repo.get_session(sessao_id)
+                
+                if not sessao:
+                    logger.error("Erro ao criar nova sessão", lead_id=lead_id)
+                    return {
+                        'success': False,
+                        'error': 'Erro ao criar sessão'
+                    }
+                
+                logger.info("Nova sessão criada", lead_id=lead_id, session_id=sessao_id)
             
             # Verificar timeout da sessão
             if self._verificar_timeout_sessao(sessao):
