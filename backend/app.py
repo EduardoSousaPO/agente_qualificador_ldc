@@ -20,6 +20,7 @@ from backend.services.scoring_service import ScoringService
 from backend.services.whatsapp_service import WhatsAppService
 from backend.services.qualification_service import QualificationService
 from backend.services.lead_detector import LeadDetectorService
+from backend.services.google_sheets_service import GoogleSheetsService
 
 # Configuração de logging estruturado
 structlog.configure(
@@ -66,6 +67,7 @@ try:
     qualification_service = QualificationService(
         session_repo, message_repo, qualificacao_repo, scoring_service, whatsapp_service
     )
+    google_sheets_service = GoogleSheetsService()
     lead_detector = LeadDetectorService(lead_repo, whatsapp_service, qualification_service)
     
     logger.info("Serviços inicializados com sucesso")
@@ -428,7 +430,97 @@ def not_found(error):
 @app.errorhandler(500)
 def internal_error(error):
     logger.error("Erro interno do servidor", error=str(error))
-    return jsonify({'error': 'Erro interno do servidor'}), 500
+    return jsonify({'error': 'Erro interno do servidor'        }), 500
+
+# ========== ENDPOINTS GOOGLE SHEETS ==========
+
+@app.route('/google-sheets/test', methods=['GET'])
+def test_google_sheets():
+    """Testa conexão com Google Sheets"""
+    try:
+        resultado = google_sheets_service.testar_conexao()
+        return jsonify(resultado), 200 if resultado['success'] else 500
+    except Exception as e:
+        logger.error("Erro ao testar Google Sheets", error=str(e))
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/google-sheets/detectar-leads', methods=['POST'])
+def detectar_leads_sheets():
+    """Detecta e processa novos leads da planilha"""
+    try:
+        resultado = google_sheets_service.detectar_novos_leads()
+        
+        if resultado['success']:
+            logger.info("Detecção de leads concluída", 
+                       novos=resultado['novos_leads'],
+                       processados=resultado['processados'],
+                       erros=resultado['erros'])
+        
+        return jsonify(resultado), 200 if resultado['success'] else 500
+        
+    except Exception as e:
+        logger.error("Erro ao detectar leads", error=str(e))
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'novos_leads': 0,
+            'processados': 0,
+            'erros': 1
+        }), 500
+
+@app.route('/google-sheets/enviar-crm', methods=['POST'])
+def enviar_resultado_crm():
+    """Envia resultado de qualificação para CRM"""
+    try:
+        data = request.get_json()
+        lead_id = data.get('lead_id')
+        
+        if not lead_id:
+            return jsonify({
+                'success': False,
+                'error': 'lead_id é obrigatório'
+            }), 400
+        
+        # Buscar dados do lead
+        lead_data = lead_repo.get_lead_by_id(lead_id)
+        if not lead_data:
+            return jsonify({
+                'success': False,
+                'error': 'Lead não encontrado'
+            }), 404
+        
+        # Buscar dados da qualificação
+        qualificacao = qualificacao_repo.get_qualificacao_by_lead(lead_id)
+        
+        # Preparar dados para CRM
+        crm_data = {
+            'nome': lead_data['nome'],
+            'telefone': lead_data['telefone'],
+            'email': lead_data.get('email', ''),
+            'canal': lead_data['canal'],
+            'status': lead_data['status'],
+            'score': lead_data['score'],
+            'patrimonio_faixa': qualificacao.get('patrimonio_faixa', '') if qualificacao else '',
+            'objetivo': qualificacao.get('objetivo', '') if qualificacao else '',
+            'prazo': qualificacao.get('prazo', '') if qualificacao else '',
+            'resumo_conversa': google_sheets_service.gerar_resumo_conversa(lead_id),
+            'proximo_passo': google_sheets_service.definir_proximo_passo(
+                lead_data['status'], lead_data['score']
+            )
+        }
+        
+        resultado = google_sheets_service.enviar_resultado_crm(crm_data)
+        return jsonify(resultado), 200 if resultado['success'] else 500
+        
+    except Exception as e:
+        logger.error("Erro ao enviar resultado para CRM", error=str(e))
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 
 if __name__ == '__main__':

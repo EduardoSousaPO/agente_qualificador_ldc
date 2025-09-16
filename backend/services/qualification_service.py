@@ -386,6 +386,9 @@ Vamos começar? 😊"""
             db_conn = DatabaseConnection()
             db_conn.get_client().table('leads').update({'score': score}).eq('id', lead_id).execute()
             
+            # Enviar resultado para CRM automaticamente
+            self._enviar_resultado_crm_automatico(lead_id, score)
+            
             logger.info("Qualificação finalizada", lead_id=lead_id, score=score)
             
         except Exception as e:
@@ -442,6 +445,66 @@ Vamos começar? 😊"""
         except Exception as e:
             logger.error("Erro ao calcular score progressivo", error=str(e))
             return max(30, score_ia)  # Fallback
+    
+    def _enviar_resultado_crm_automatico(self, lead_id: str, score: int):
+        """Envia resultado da qualificação para CRM automaticamente"""
+        try:
+            # Só enviar se score for alto o suficiente (qualificado ou semi-qualificado)
+            if score < 40:
+                logger.info("Score baixo - não enviando para CRM", lead_id=lead_id, score=score)
+                return
+            
+            from backend.services.google_sheets_service import GoogleSheetsService
+            from backend.models.database_models import LeadRepository, DatabaseConnection
+            
+            # Inicializar serviços
+            google_sheets_service = GoogleSheetsService()
+            db_conn = DatabaseConnection()
+            lead_repo = LeadRepository(db_conn)
+            
+            # Buscar dados do lead
+            lead_data = lead_repo.get_lead_by_id(lead_id)
+            if not lead_data:
+                logger.error("Lead não encontrado para envio CRM", lead_id=lead_id)
+                return
+            
+            # Buscar dados da qualificação
+            qualificacao = self.qualificacao_repo.get_qualificacao_by_lead(lead_id)
+            
+            # Preparar dados para CRM
+            crm_data = {
+                'nome': lead_data['nome'],
+                'telefone': lead_data['telefone'],
+                'email': lead_data.get('email', ''),
+                'canal': lead_data['canal'],
+                'status': lead_data['status'],
+                'score': score,
+                'patrimonio_faixa': qualificacao.get('patrimonio_faixa', '') if qualificacao else '',
+                'objetivo': qualificacao.get('objetivo', '') if qualificacao else '',
+                'prazo': qualificacao.get('prazo', '') if qualificacao else '',
+                'resumo_conversa': google_sheets_service.gerar_resumo_conversa(lead_id),
+                'proximo_passo': google_sheets_service.definir_proximo_passo(
+                    lead_data['status'], score
+                )
+            }
+            
+            # Enviar para CRM
+            resultado = google_sheets_service.enviar_resultado_crm(crm_data)
+            
+            if resultado['success']:
+                logger.info("Resultado enviado automaticamente para CRM", 
+                           lead_id=lead_id, 
+                           nome=lead_data['nome'],
+                           score=score)
+            else:
+                logger.warning("Falha ao enviar resultado para CRM", 
+                              lead_id=lead_id, 
+                              error=resultado.get('error'))
+            
+        except Exception as e:
+            logger.error("Erro ao enviar resultado CRM automaticamente", 
+                        lead_id=lead_id, 
+                        error=str(e))
     
     def _processar_saudacao(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
         """Processa resposta à saudação inicial"""
