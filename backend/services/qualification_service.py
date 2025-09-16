@@ -202,37 +202,25 @@ Isso vai levar apenas 2 minutos e no final vou te dar uma recomendação persona
 
 Vamos começar? 😊"""
             
-            # Enviar saudação
-            resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, saudacao)
-            
-            if resultado_envio['success']:
-                # Registrar saudação enviada
-                self._registrar_mensagem(sessao['id'], lead_id, saudacao, 'enviada')
-                
-                # Atualizar contexto e estado
-                contexto_atualizado = sessao.get('contexto', {})
-                contexto_atualizado.update({
-                    'telefone': telefone,
-                    'nome': nome,
-                    'inicio_qualificacao': datetime.now().isoformat()
-                })
-                
-                self.session_repo.update_session(sessao['id'], {
-                    'estado': 'saudacao',
-                    'contexto': contexto_atualizado
-                })
-                
-                return {
-                    'success': True,
-                    'next_state': 'saudacao',
-                    'message': 'Saudação enviada'
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': 'Erro ao enviar saudação',
-                    'details': resultado_envio
-                }
+            # Não enviar saudação aqui - já foi enviada no iniciar_qualificacao
+            # Apenas atualizar contexto e estado
+            contexto_atualizado = sessao.get('contexto', {})
+            contexto_atualizado.update({
+                'telefone': telefone,
+                'nome': nome,
+                'inicio_qualificacao': datetime.now().isoformat()
+            })
+
+            self.session_repo.update_session(sessao['id'], {
+                'estado': 'saudacao',
+                'contexto': contexto_atualizado
+            })
+
+            return {
+                'success': True,
+                'next_state': 'saudacao',
+                'message': 'Estado atualizado para saudação'
+            }
                 
         except Exception as e:
             logger.error("Erro ao processar início", lead_id=lead_id, error=str(e))
