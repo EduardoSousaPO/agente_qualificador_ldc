@@ -10,6 +10,7 @@ import structlog
 from backend.models.database_models import Session, Message, Qualificacao, SystemLog
 from backend.services.scoring_service import ScoringService
 from backend.services.whatsapp_service import WhatsAppService
+from backend.services.ai_conversation_service import AIConversationService
 
 logger = structlog.get_logger()
 
@@ -23,6 +24,7 @@ class QualificationService:
         self.qualificacao_repo = qualificacao_repo
         self.scoring_service = scoring_service
         self.whatsapp_service = whatsapp_service
+        self.ai_service = AIConversationService()
         
         self.timeout_sessao = int(os.getenv('TIMEOUT_SESSAO_MINUTOS', '60'))
         
@@ -177,23 +179,8 @@ class QualificationService:
             # Registrar mensagem recebida
             self._registrar_mensagem(sessao['id'], lead_id, mensagem, 'recebida')
             
-            # Processar baseado no estado atual
-            estado_atual = sessao['estado']
-            
-            if estado_atual == 'inicio':
-                return self._processar_inicio(sessao, lead_id, mensagem)
-            elif estado_atual == 'saudacao':
-                return self._processar_saudacao(sessao, lead_id, mensagem)
-            elif estado_atual.startswith('pergunta_'):
-                return self._processar_resposta_pergunta(sessao, lead_id, mensagem)
-            elif estado_atual == 'resultado':
-                return self._processar_pos_resultado(sessao, lead_id, mensagem)
-            else:
-                logger.warning("Estado não reconhecido", lead_id=lead_id, estado=estado_atual)
-                return {
-                    'success': False,
-                    'error': f'Estado não reconhecido: {estado_atual}'
-                }
+            # Processar com IA - conversação humanizada
+            return self._processar_com_ia(sessao, lead_id, mensagem)
                 
         except Exception as e:
             logger.error("Erro ao processar mensagem", lead_id=lead_id, error=str(e))
@@ -270,6 +257,126 @@ Vamos começar? 😊"""
         except Exception as e:
             logger.error("Erro ao verificar mensagem duplicada", error=str(e))
             return False
+    
+    def _processar_com_ia(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
+        """Processa mensagem usando IA para conversação humanizada"""
+        try:
+            # Buscar dados do lead
+            from backend.models.database_models import DatabaseConnection
+            db_conn = DatabaseConnection()
+            
+            lead_data = db_conn.get_client().table('leads').select('*').eq('id', lead_id).execute()
+            if not lead_data.data:
+                return {'success': False, 'error': 'Lead não encontrado'}
+            
+            lead = lead_data.data[0]
+            
+            # Buscar histórico da conversa
+            historico = self._buscar_historico_conversa(sessao['id'])
+            
+            # Gerar resposta com IA
+            resposta_ia = self.ai_service.gerar_resposta_humanizada(
+                lead_nome=lead['nome'],
+                lead_canal=lead['canal'],
+                mensagem_lead=mensagem,
+                historico_conversa=historico,
+                estado_atual=sessao['estado']
+            )
+            
+            if not resposta_ia['success']:
+                return resposta_ia
+            
+            # Enviar resposta
+            resultado_envio = self.whatsapp_service.enviar_mensagem(
+                telefone=lead['telefone'],
+                mensagem=resposta_ia['resposta']
+            )
+            
+            if not resultado_envio['success']:
+                return {
+                    'success': False,
+                    'error': 'Erro ao enviar resposta'
+                }
+            
+            # Registrar resposta enviada
+            self._registrar_mensagem(sessao['id'], lead_id, resposta_ia['resposta'], 'enviada')
+            
+            # Atualizar estado da sessão se necessário
+            if resposta_ia.get('proximo_estado') != sessao['estado']:
+                contexto_atualizado = sessao.get('contexto', {})
+                contexto_atualizado.update(resposta_ia.get('contexto_atualizado', {}))
+                
+                self.session_repo.update_session(sessao['id'], {
+                    'estado': resposta_ia['proximo_estado'],
+                    'contexto': contexto_atualizado
+                })
+            
+            # Se chegou ao final da qualificação, calcular score
+            if resposta_ia.get('acao') == 'finalizar':
+                self._finalizar_qualificacao(sessao, lead_id, resposta_ia.get('score_parcial', 0))
+            
+            return {
+                'success': True,
+                'resposta_enviada': resposta_ia['resposta'],
+                'acao': resposta_ia.get('acao'),
+                'novo_estado': resposta_ia.get('proximo_estado')
+            }
+            
+        except Exception as e:
+            logger.error("Erro ao processar com IA", error=str(e), lead_id=lead_id)
+            # Fallback para resposta padrão
+            mensagem_fallback = "Desculpe, tive um problema técnico. Pode me contar mais sobre sua situação financeira atual?"
+            
+            resultado_envio = self.whatsapp_service.enviar_mensagem(
+                telefone=lead.get('telefone', ''),
+                mensagem=mensagem_fallback
+            )
+            
+            return {
+                'success': True,
+                'resposta_enviada': mensagem_fallback,
+                'fallback': True
+            }
+    
+    def _buscar_historico_conversa(self, session_id: str) -> List[Dict[str, str]]:
+        """Busca o histórico de mensagens da conversa"""
+        try:
+            messages = self.message_repo.get_messages_by_session(session_id)
+            return [
+                {
+                    'tipo': msg['tipo'],
+                    'conteudo': msg['conteudo'],
+                    'created_at': msg['created_at']
+                }
+                for msg in messages
+            ]
+        except Exception as e:
+            logger.error("Erro ao buscar histórico", error=str(e))
+            return []
+    
+    def _finalizar_qualificacao(self, sessao: Dict[str, Any], lead_id: str, score: int):
+        """Finaliza o processo de qualificação"""
+        try:
+            # Criar registro de qualificação
+            qualificacao = Qualificacao(
+                lead_id=lead_id,
+                session_id=sessao['id'],
+                score=score,
+                respostas=sessao.get('contexto', {}),
+                status='concluida'
+            )
+            
+            self.qualificacao_repo.create_qualificacao(qualificacao)
+            
+            # Atualizar score do lead
+            from backend.models.database_models import DatabaseConnection
+            db_conn = DatabaseConnection()
+            db_conn.get_client().table('leads').update({'score': score}).eq('id', lead_id).execute()
+            
+            logger.info("Qualificação finalizada", lead_id=lead_id, score=score)
+            
+        except Exception as e:
+            logger.error("Erro ao finalizar qualificação", error=str(e))
     
     def _processar_saudacao(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
         """Processa resposta à saudação inicial"""
