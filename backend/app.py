@@ -125,9 +125,23 @@ def webhook_whatsapp():
             return jsonify({'status': 'ignored', 'event_type': event_type}), 200
         
         # Validar estrutura da mensagem WAHA
-        if not payload or 'from' not in payload or 'body' not in payload:
-            logger.warning("Webhook com estrutura inválida", data=data)
-            return jsonify({'status': 'invalid_data'}), 400
+        logger.info("Validando payload", 
+                   payload_exists=bool(payload), 
+                   payload_keys=list(payload.keys()) if payload else [],
+                   from_exists='from' in payload if payload else False,
+                   body_exists='body' in payload if payload else False)
+        
+        if not payload:
+            logger.warning("Payload vazio", data=data)
+            return jsonify({'status': 'empty_payload'}), 400
+            
+        if 'from' not in payload:
+            logger.warning("Campo 'from' ausente no payload", payload_keys=list(payload.keys()))
+            return jsonify({'status': 'missing_from_field'}), 400
+            
+        if 'body' not in payload:
+            logger.warning("Campo 'body' ausente no payload", payload_keys=list(payload.keys()))
+            return jsonify({'status': 'missing_body_field'}), 400
         
         # Ignorar mensagens próprias
         if payload.get('fromMe', False):
