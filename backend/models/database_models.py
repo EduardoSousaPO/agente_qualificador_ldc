@@ -270,6 +270,15 @@ class MessageRepository:
             self.log_error(f"Erro ao criar mensagem: {str(e)}", {'message_data': message.to_dict()})
             return None
     
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Busca uma sessão pelo ID"""
+        try:
+            result = self.db.table('sessions').select('*').eq('id', session_id).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            self.log_error(f"Erro ao buscar sessão: {str(e)}", {'session_id': session_id})
+            return None
+
     def get_session_messages(self, session_id: str) -> List[Dict[str, Any]]:
         """Busca mensagens de uma sessão"""
         try:
