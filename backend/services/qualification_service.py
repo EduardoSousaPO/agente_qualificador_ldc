@@ -179,8 +179,13 @@ class QualificationService:
         try:
             logger.info("Processando estado inicial", lead_id=lead_id)
             
-            # Buscar dados do lead
-            lead_data = self.session_repo.db.supabase.table('leads').select('*').eq('id', lead_id).execute()
+            # Buscar dados do lead usando o repositório correto
+            from backend.models.database_models import DatabaseConnection, LeadRepository
+            db_conn = DatabaseConnection()
+            lead_repo = LeadRepository(db_conn)
+            
+            # Buscar lead pelo ID
+            lead_data = db_conn.get_client().table('leads').select('*').eq('id', lead_id).execute()
             if not lead_data.data:
                 return {'success': False, 'error': 'Lead não encontrado'}
             
