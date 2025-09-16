@@ -152,7 +152,9 @@ class QualificationService:
             # Processar baseado no estado atual
             estado_atual = sessao['estado']
             
-            if estado_atual == 'saudacao':
+            if estado_atual == 'inicio':
+                return self._processar_inicio(sessao, lead_id, mensagem)
+            elif estado_atual == 'saudacao':
                 return self._processar_saudacao(sessao, lead_id, mensagem)
             elif estado_atual.startswith('pergunta_'):
                 return self._processar_resposta_pergunta(sessao, lead_id, mensagem)
@@ -171,6 +173,65 @@ class QualificationService:
                 'success': False,
                 'error': str(e)
             }
+    
+    def _processar_inicio(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
+        """Processa primeira mensagem do lead - envia saudação"""
+        try:
+            logger.info("Processando estado inicial", lead_id=lead_id)
+            
+            # Buscar dados do lead
+            lead_data = self.session_repo.db.supabase.table('leads').select('*').eq('id', lead_id).execute()
+            if not lead_data.data:
+                return {'success': False, 'error': 'Lead não encontrado'}
+            
+            lead = lead_data.data[0]
+            telefone = lead['telefone']
+            nome = lead['nome'] or 'amigo(a)'
+            
+            # Criar mensagem de saudação personalizada
+            saudacao = f"""Olá {nome}! 👋
+
+Sou o assistente da LDC Capital e vou te ajudar com algumas perguntas rápidas para entender melhor seu perfil de investimento.
+
+Isso vai levar apenas 2 minutos e no final vou te dar uma recomendação personalizada! 
+
+Vamos começar? 😊"""
+            
+            # Enviar saudação
+            resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, saudacao)
+            
+            if resultado_envio['success']:
+                # Registrar saudação enviada
+                self._registrar_mensagem(sessao['id'], lead_id, saudacao, 'enviada')
+                
+                # Atualizar contexto e estado
+                contexto_atualizado = sessao.get('contexto', {})
+                contexto_atualizado.update({
+                    'telefone': telefone,
+                    'nome': nome,
+                    'inicio_qualificacao': datetime.now().isoformat()
+                })
+                
+                self.session_repo.update_session(sessao['id'], {
+                    'estado': 'saudacao',
+                    'contexto': contexto_atualizado
+                })
+                
+                return {
+                    'success': True,
+                    'next_state': 'saudacao',
+                    'message': 'Saudação enviada'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': 'Erro ao enviar saudação',
+                    'details': resultado_envio
+                }
+                
+        except Exception as e:
+            logger.error("Erro ao processar início", lead_id=lead_id, error=str(e))
+            return {'success': False, 'error': str(e)}
     
     def _processar_saudacao(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
         """Processa resposta à saudação inicial"""
