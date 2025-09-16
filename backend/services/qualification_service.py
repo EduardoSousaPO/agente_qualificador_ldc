@@ -28,12 +28,12 @@ class QualificationService:
         
         self.timeout_sessao = int(os.getenv('TIMEOUT_SESSAO_MINUTOS', '60'))
         
-        # Estados simplificados - foco no agendamento
+        # Estados estratégicos - qualificação + convencimento + agendamento
         self.estados = [
-            'inicio',      # Cumprimento inicial
-            'saudacao',    # Identificar situação + oferecer diagnóstico  
-            'agendamento', # Agendar consulta
-            'finalizado'   # Processo concluído
+            'inicio',        # Cumprimento caloroso + curiosidade inicial
+            'saudacao',      # Qualificação (patrimônio, objetivo, prazo) + diferencial LDC
+            'agendamento',   # Fechamento com CTA provocador
+            'finalizado'     # Processo concluído
         ]
     
     def iniciar_qualificacao(self, lead_id: str, telefone: str, canal: str) -> Dict[str, Any]:
