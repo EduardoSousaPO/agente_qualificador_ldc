@@ -222,12 +222,14 @@ Qual sua preferência? 🎯
             if response.status_code == 200:
                 sessions = response.json()
                 return {
+                    'success': True,
                     'status': 'connected',
                     'sessions': sessions,
                     'base_url': self.base_url
                 }
             else:
                 return {
+                    'success': False,
                     'status': 'error',
                     'status_code': response.status_code,
                     'error': response.text,
@@ -236,6 +238,7 @@ Qual sua preferência? 🎯
                 
         except Exception as e:
             return {
+                'success': False,
                 'status': 'connection_failed',
                 'error': str(e),
                 'base_url': self.base_url

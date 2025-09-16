@@ -26,6 +26,7 @@ def test_waha_connection():
             
             waha_conn = data.get('waha_connection', {})
             print(f"   WAHA Success: {waha_conn.get('success')}")
+            print(f"   WAHA Response completa: {json.dumps(waha_conn, indent=4)}")
             
             if waha_conn.get('success'):
                 print("   🎉 CONEXÃO COM WAHA: SUCESSO!")
@@ -35,6 +36,7 @@ def test_waha_connection():
             else:
                 print("   ❌ CONEXÃO COM WAHA: FALHOU")
                 print(f"   Erro: {waha_conn.get('error', 'Desconhecido')}")
+                print(f"   Status Code: {waha_conn.get('status_code', 'N/A')}")
                 
         else:
             print(f"❌ Erro HTTP: {response.status_code}")
