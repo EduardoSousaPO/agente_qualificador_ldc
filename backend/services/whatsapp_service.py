@@ -135,9 +135,15 @@ Qual sua preferência? 🎯
                 "session": self.session_name
             }
             
+            # Preparar headers com API key
+            headers = {'Content-Type': 'application/json'}
+            if self.api_key:
+                headers['X-API-KEY'] = self.api_key
+            
             response = requests.post(
                 f"{self.base_url}/api/sendText",
                 json=payload,
+                headers=headers,
                 timeout=30
             )
             
