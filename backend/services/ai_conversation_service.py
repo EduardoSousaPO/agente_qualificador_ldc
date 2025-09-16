@@ -5,8 +5,8 @@ Implementa conversação humanizada usando OpenAI GPT com técnicas de vendas
 
 import os
 import json
+import requests
 from typing import Dict, Any, List, Optional
-from openai import OpenAI
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -15,8 +15,9 @@ class AIConversationService:
     """Serviço para conversação inteligente com IA"""
     
     def __init__(self):
-        self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        self.api_key = os.getenv('OPENAI_API_KEY')
         self.model = "gpt-3.5-turbo"
+        self.api_url = "https://api.openai.com/v1/chat/completions"
         
     def gerar_resposta_humanizada(self, 
                                   lead_nome: str,
@@ -40,17 +41,26 @@ class AIConversationService:
                 {"role": "user", "content": f"Histórico da conversa:\n{contexto_historico}\n\nÚltima mensagem do lead: {mensagem_lead}"}
             ]
             
-            # Chamar OpenAI
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=200,  # Respostas curtas
-                temperature=0.7,  # Criatividade moderada
-                response_format={"type": "json_object"}
-            )
+            # Chamar OpenAI via requests
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            data = {
+                "model": self.model,
+                "messages": messages,
+                "max_tokens": 200,
+                "temperature": 0.7,
+                "response_format": {"type": "json_object"}
+            }
+            
+            response = requests.post(self.api_url, headers=headers, json=data, timeout=30)
+            response.raise_for_status()
             
             # Processar resposta
-            resposta_json = json.loads(response.choices[0].message.content)
+            response_data = response.json()
+            resposta_json = json.loads(response_data['choices'][0]['message']['content'])
             
             logger.info("Resposta IA gerada", 
                        lead_nome=lead_nome, 
@@ -185,15 +195,24 @@ Responda em JSON:
 }}
 """
             
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=150,
-                temperature=0.3,
-                response_format={"type": "json_object"}
-            )
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json"
+            }
             
-            return json.loads(response.choices[0].message.content)
+            data = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 150,
+                "temperature": 0.3,
+                "response_format": {"type": "json_object"}
+            }
+            
+            response = requests.post(self.api_url, headers=headers, json=data, timeout=30)
+            response.raise_for_status()
+            
+            response_data = response.json()
+            return json.loads(response_data['choices'][0]['message']['content'])
             
         except Exception as e:
             logger.error("Erro ao analisar intenção", error=str(e))
