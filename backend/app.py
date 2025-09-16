@@ -113,7 +113,7 @@ def webhook_whatsapp():
         
         # Só processar eventos de mensagem
         if event_type not in ['message', 'message.any']:
-            logger.info("Evento ignorado", event=event_type)
+            logger.info("Evento ignorado", event_type=event_type)
             return jsonify({'status': 'ignored'}), 200
         
         # Validar estrutura da mensagem WAHA
