@@ -28,17 +28,12 @@ class QualificationService:
         
         self.timeout_sessao = int(os.getenv('TIMEOUT_SESSAO_MINUTOS', '60'))
         
-        # Estados do fluxo de qualificação
+        # Estados simplificados - foco no agendamento
         self.estados = [
-            'inicio',
-            'saudacao', 
-            'pergunta_1',
-            'pergunta_2',
-            'pergunta_3',
-            'pergunta_4',
-            'calculando_score',
-            'resultado',
-            'finalizado'
+            'inicio',      # Cumprimento inicial
+            'saudacao',    # Identificar situação + oferecer diagnóstico  
+            'agendamento', # Agendar consulta
+            'finalizado'   # Processo concluído
         ]
     
     def iniciar_qualificacao(self, lead_id: str, telefone: str, canal: str) -> Dict[str, Any]:
@@ -311,9 +306,13 @@ Vamos começar? 😊"""
                     'contexto': contexto_atualizado
                 })
             
-            # Se chegou ao final da qualificação, calcular score
-            if resposta_ia.get('acao') == 'finalizar':
-                self._finalizar_qualificacao(sessao, lead_id, resposta_ia.get('score_parcial', 0))
+            # Se chegou ao agendamento, marcar como qualificado
+            if resposta_ia.get('acao') == 'agendar':
+                self._finalizar_qualificacao(sessao, lead_id, 85)  # Score alto para agendamento
+            
+            # Se finalizou sem agendamento
+            elif resposta_ia.get('acao') == 'finalizar':
+                self._finalizar_qualificacao(sessao, lead_id, resposta_ia.get('score_parcial', 30))
             
             return {
                 'success': True,
