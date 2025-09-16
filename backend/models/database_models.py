@@ -288,6 +288,10 @@ class MessageRepository:
             self.log_error(f"Erro ao buscar mensagens da sessão: {str(e)}", {'session_id': session_id})
             return []
     
+    def get_messages_by_session(self, session_id: str) -> List[Dict[str, Any]]:
+        """Busca mensagens por sessão (alias para get_session_messages)"""
+        return self.get_session_messages(session_id)
+    
     def log_error(self, evento: str, detalhes: Dict[str, Any] = None):
         """Log de erro interno"""
         try:
