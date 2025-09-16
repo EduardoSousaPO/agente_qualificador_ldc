@@ -147,7 +147,7 @@ Qual sua preferência? 🎯
                 timeout=30
             )
             
-            if response.status_code == 200:
+            if response.status_code in [200, 201]:
                 logger.info("Mensagem enviada com sucesso", 
                            telefone=telefone_limpo, 
                            tentativa=tentativa)
@@ -225,7 +225,7 @@ Qual sua preferência? 🎯
                 timeout=10
             )
             
-            if response.status_code == 200:
+            if response.status_code in [200, 201]:
                 sessions = response.json()
                 return {
                     'success': True,
@@ -335,7 +335,7 @@ Mande qualquer mensagem para reativar nosso chat! 😊
                 timeout=10
             )
             
-            if response.status_code == 200:
+            if response.status_code in [200, 201]:
                 data = response.json()
                 return {
                     'success': True,
