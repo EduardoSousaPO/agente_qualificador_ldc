@@ -105,16 +105,24 @@ def webhook_whatsapp():
     """Webhook para receber mensagens do WAHA"""
     try:
         data = request.get_json()
-        logger.info("Webhook recebido", data=data)
+        logger.info("=== WEBHOOK RECEBIDO ===", 
+                   data=data, 
+                   headers=dict(request.headers),
+                   method=request.method,
+                   url=request.url)
         
         # Extrair dados da estrutura WAHA
         payload = data.get('payload', {})
         event_type = data.get('event', '')
         
-        # Só processar eventos de mensagem
-        if event_type not in ['message', 'message.any']:
-            logger.info("Evento ignorado", event_type=event_type)
-            return jsonify({'status': 'ignored'}), 200
+        # Log detalhado para debug de eventos
+        logger.info("Evento recebido para análise", event_type=event_type, payload_keys=list(payload.keys()) if payload else [])
+        
+        # Aceitar mais tipos de eventos de mensagem para debug
+        valid_events = ['message', 'message.any', 'message.text', 'message.received', 'message.new']
+        if event_type not in valid_events:
+            logger.info("Evento ignorado", event_type=event_type, valid_events=valid_events)
+            return jsonify({'status': 'ignored', 'event_type': event_type}), 200
         
         # Validar estrutura da mensagem WAHA
         if not payload or 'from' not in payload or 'body' not in payload:
