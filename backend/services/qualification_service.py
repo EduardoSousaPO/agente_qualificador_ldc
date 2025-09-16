@@ -28,11 +28,12 @@ class QualificationService:
         
         self.timeout_sessao = int(os.getenv('TIMEOUT_SESSAO_MINUTOS', '60'))
         
-        # Estados estratégicos - qualificação + convencimento + agendamento
+        # Estados humanizados - fluxo natural e consultivo
         self.estados = [
-            'inicio',        # Cumprimento caloroso + curiosidade inicial
-            'saudacao',      # Qualificação (patrimônio, objetivo, prazo) + diferencial LDC
-            'agendamento',   # Fechamento com CTA provocador
+            'inicio',        # Cumprimento caloroso + saber se já investe
+            'saudacao',      # Qualificação (patrimônio, objetivo, prazo) - tom natural
+            'convencimento', # Explicar modelo fee-based + lidar com objeções
+            'agendamento',   # Fechamento com convite concreto
             'finalizado'     # Processo concluído
         ]
     
@@ -312,7 +313,14 @@ Vamos começar? 😊"""
             
             # Se finalizou sem agendamento
             elif resposta_ia.get('acao') == 'finalizar':
-                self._finalizar_qualificacao(sessao, lead_id, resposta_ia.get('score_parcial', 30))
+                # Score baseado no estado alcançado
+                score_final = 30  # Base
+                if sessao['estado'] == 'convencimento':
+                    score_final = 60  # Chegou ao convencimento
+                elif sessao['estado'] == 'agendamento':
+                    score_final = 75  # Chegou ao agendamento mas não confirmou
+                
+                self._finalizar_qualificacao(sessao, lead_id, resposta_ia.get('score_parcial', score_final))
             
             return {
                 'success': True,
