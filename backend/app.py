@@ -107,13 +107,27 @@ def webhook_whatsapp():
         data = request.get_json()
         logger.info("Webhook recebido", data=data)
         
-        # Validar estrutura da mensagem
-        if not data or 'from' not in data or 'body' not in data:
+        # Extrair dados da estrutura WAHA
+        payload = data.get('payload', {})
+        event_type = data.get('event', '')
+        
+        # Só processar eventos de mensagem
+        if event_type not in ['message', 'message.any']:
+            logger.info("Evento ignorado", event=event_type)
+            return jsonify({'status': 'ignored'}), 200
+        
+        # Validar estrutura da mensagem WAHA
+        if not payload or 'from' not in payload or 'body' not in payload:
             logger.warning("Webhook com estrutura inválida", data=data)
             return jsonify({'status': 'invalid_data'}), 400
         
-        telefone = data['from']
-        mensagem = data['body']
+        # Ignorar mensagens próprias
+        if payload.get('fromMe', False):
+            logger.info("Mensagem própria ignorada")
+            return jsonify({'status': 'own_message'}), 200
+        
+        telefone = payload['from']
+        mensagem = payload['body']
         
         # Buscar ou criar lead
         lead_data = lead_repo.get_lead_by_phone(telefone)
