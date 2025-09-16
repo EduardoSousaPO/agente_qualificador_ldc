@@ -204,6 +204,42 @@ Qual sua preferência? 🎯
         """Retorna pergunta de qualificação"""
         return self.perguntas.get(numero_pergunta, "Pergunta não encontrada")
     
+    def test_connection(self) -> Dict[str, Any]:
+        """Testa a conexão com WAHA"""
+        try:
+            headers = {}
+            if self.api_key:
+                headers['X-API-KEY'] = self.api_key
+            
+            # Testar endpoint de sessões
+            response = requests.get(
+                f"{self.base_url}/api/sessions",
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                sessions = response.json()
+                return {
+                    'status': 'connected',
+                    'sessions': sessions,
+                    'base_url': self.base_url
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'status_code': response.status_code,
+                    'error': response.text,
+                    'base_url': self.base_url
+                }
+                
+        except Exception as e:
+            return {
+                'status': 'connection_failed',
+                'error': str(e),
+                'base_url': self.base_url
+            }
+    
     def gerar_mensagem_score_alto(self, nome: str, score: int) -> str:
         """Gera mensagem para leads qualificados (score >= 70)"""
         return f"""

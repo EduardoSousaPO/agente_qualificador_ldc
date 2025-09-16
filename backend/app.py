@@ -339,6 +339,28 @@ def processar_novos_leads():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/test-whatsapp', methods=['POST'])
+def testar_whatsapp():
+    """Testa conexão com WAHA"""
+    try:
+        # Testar conexão com WAHA
+        response = whatsapp_service.test_connection()
+        
+        return jsonify({
+            'status': 'success',
+            'waha_connection': response,
+            'timestamp': datetime.now().isoformat()
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao testar WhatsApp", error=str(e))
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
 @app.route('/logs', methods=['GET'])
 def obter_logs():
     """Obtém logs do sistema"""
