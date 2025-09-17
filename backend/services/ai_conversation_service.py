@@ -60,7 +60,24 @@ class AIConversationService:
             
             # Processar resposta
             response_data = response.json()
-            resposta_json = json.loads(response_data['choices'][0]['message']['content'])
+            content = response_data['choices'][0]['message']['content']
+            
+            # Log do conteúdo para debug
+            logger.info("Conteúdo da resposta IA", content=content[:500])
+            
+            # Tentar fazer parse do JSON
+            try:
+                resposta_json = json.loads(content)
+            except json.JSONDecodeError as e:
+                logger.error("Erro ao fazer parse do JSON da IA", content=content, error=str(e))
+                # Fallback para resposta padrão
+                resposta_json = {
+                    "mensagem": "Desculpe, tive um problema técnico. Pode repetir sua mensagem?",
+                    "acao": "continuar",
+                    "proximo_estado": estado_atual,
+                    "contexto": {},
+                    "score_parcial": 0
+                }
             
             logger.info("Resposta IA gerada", 
                        lead_nome=lead_nome, 

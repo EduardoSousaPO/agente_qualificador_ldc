@@ -233,6 +233,15 @@ class SessionRepository:
             self.log_error(f"Erro ao buscar sessão recente: {str(e)}", {'lead_id': lead_id})
             return None
     
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Busca uma sessão pelo ID"""
+        try:
+            result = self.db.table('sessions').select('*').eq('id', session_id).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            self.log_error(f"Erro ao buscar sessão: {str(e)}", {'session_id': session_id})
+            return None
+
     def update_session(self, session_id: str, updates: Dict[str, Any]) -> bool:
         """Atualiza uma sessão"""
         try:
@@ -381,5 +390,42 @@ class SystemLogRepository:
         except Exception:
             return []
 
+
+class QualificacaoRepository:
+    """Repository para operações com Qualificações"""
+    
+    def __init__(self, db: DatabaseConnection):
+        self.db = db.get_client()
+    
+    def create_qualificacao(self, qualificacao: Qualificacao) -> Optional[Dict[str, Any]]:
+        """Cria uma nova qualificação"""
+        try:
+            result = self.db.table('qualificacoes').insert(qualificacao.to_dict()).execute()
+            return result.data[0] if result.data else None
+        except Exception as e:
+            return None
+    
+    def get_by_lead_id(self, lead_id: str) -> Optional[Dict[str, Any]]:
+        """Busca qualificação por lead_id"""
+        try:
+            result = self.db.table('qualificacoes').select('*').eq('lead_id', lead_id).execute()
+            return result.data[0] if result.data else None
+        except Exception:
+            return None
+
+
+class SystemLogRepository:
+    """Repository para logs do sistema"""
+    
+    def __init__(self, db: DatabaseConnection):
+        self.db = db.get_client()
+    
+    def create_log(self, log: SystemLog) -> bool:
+        """Cria um log"""
+        try:
+            self.db.table('system_logs').insert(log.to_dict()).execute()
+            return True
+        except Exception:
+            return False
 
 
