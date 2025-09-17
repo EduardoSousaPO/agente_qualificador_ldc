@@ -32,6 +32,13 @@ class AIConversationService:
         """
         Gera resposta humanizada usando IA com técnicas de vendas e fallbacks inteligentes
         """
+        # Verificar se lead não entendeu a pergunta
+        if self._detectar_nao_compreensao(mensagem_lead):
+            logger.info("Lead não entendeu a pergunta - usando reformulação", 
+                       session_id=session_id, estado=estado_atual, mensagem=mensagem_lead)
+            # Forçar reformulação ao invés de fallback normal
+            return self._gerar_reformulacao_especifica(estado_atual, lead_nome, mensagem_lead)
+        
         # Verificar se precisa usar fallback para evitar loops
         fallback_result = self._verificar_fallback(session_id, mensagem_lead, estado_atual, lead_nome)
         if fallback_result:
@@ -162,6 +169,13 @@ REGRAS DE QUALIFICAÇÃO:
 - Seja flexível com respostas aproximadas
 - MÁXIMO 3 perguntas antes de agendar
 
+🚨 REGRA CRÍTICA - REFORMULAÇÃO (NUNCA TRANSFERIR PREMATURAMENTE):
+- Se lead disser "não entendi", "como assim?", "não sei" → SEMPRE reformular primeiro
+- Use linguagem popular: "crescer o dinheiro" ao invés de "objetivo financeiro"
+- Dê exemplos concretos: "tipo dobrar em alguns anos" ou "que te pague todo mês"
+- Divida em opções: 1️⃣ CRESCER 2️⃣ RENDA MENSAL 3️⃣ APOSENTADORIA
+- Só transferir para humano após 2 tentativas de reformulação falharem
+
 OBJETIVO FINAL:
 - Agendar reunião com consultor especialista
 - Manter {lead_nome} engajado até o final
@@ -208,15 +222,19 @@ PRÓXIMO PASSO: Perguntar objetivo específico
 {base_prompt}
 
 ESTADO ATUAL: Qualificar patrimônio
-FOCO: Descobrir faixa de valor de forma natural
+FOCO: Descobrir faixa de valor com linguagem CLARA e ESPECÍFICA
 
-EXEMPLO: "Bacana, {lead_nome}! Pra te dar as melhores dicas, em que faixa você tá: até 100 mil, 100-500 mil, 500 mil-1 milhão, ou acima disso?"
+EXEMPLO PRINCIPAL: "Bacana, {lead_nome}! Pra te dar as dicas certas, me conta: você tem até uns 100 mil guardados, entre 100-500 mil, ou já passou dos 500 mil?"
+
+SE LEAD NÃO ENTENDER, REFORMULAR ASSIM: "Vou explicar diferente! É assim: você tem uma QUANTIA PEQUENA pra começar (tipo até 100 mil), uma QUANTIA MÉDIA (100 a 500 mil), ou já tem uma BOA RESERVA (mais de 500 mil)?"
 
 ACEITAR VARIAÇÕES:
-- "Pouco" / "Começando" = até 100k
-- "Médio" / "Razoável" = 100-500k
-- "Bastante" / "Bem" = 500k+
+- "Pouco" / "Começando" / "Pequena" = até 100k
+- "Médio" / "Razoável" / "Média" = 100-500k
+- "Bastante" / "Bem" / "Boa reserva" = 500k+
 - Valores exatos = classificar na faixa
+
+IMPORTANTE: NUNCA transferir para humano se lead não entender - SEMPRE reformular primeiro!
 
 REAÇÃO NEUTRA: "Perfeito! Vamos entender seus objetivos então."
 
@@ -227,15 +245,22 @@ PRÓXIMO PASSO: Descobrir objetivo principal
 {base_prompt}
 
 ESTADO ATUAL: Descobrir objetivos financeiros
-FOCO: Entender o que {lead_nome} quer alcançar
+FOCO: Entender o que {lead_nome} quer alcançar com linguagem CLARA e ESPECÍFICA
 
-EXEMPLO: "Perfeito, {lead_nome}! E qual seu principal objetivo? Crescer o patrimônio, gerar renda extra, se aposentar bem...?"
+EXEMPLO PRINCIPAL: "Show, {lead_nome}! Agora me conta: você quer que esse dinheiro CRESÇA bastante (tipo dobrar em alguns anos), ou prefere que ele te dê uma RENDA TODO MÊS (tipo um aluguel)?"
+
+SE LEAD NÃO ENTENDER, REFORMULAR ASSIM: "É simples! Imagina que você tem 100 mil reais. Você prefere:
+1️⃣ Que vire 200 mil em alguns anos (CRESCIMENTO)
+2️⃣ Que te pague uns 800-1000 reais todo mês (RENDA)
+3️⃣ Que fique seguro pra aposentadoria (LONGO PRAZO)"
 
 ACEITAR VARIAÇÕES:
-- "Ficar rico" / "Crescer" = crescimento
-- "Renda passiva" / "Renda extra" = renda
-- "Aposentadoria" / "Aposentar" = previdência
-- "Proteger" / "Segurança" = proteção
+- "Ficar rico" / "Crescer" / "Dobrar" = crescimento
+- "Renda passiva" / "Renda extra" / "Todo mês" = renda
+- "Aposentadoria" / "Aposentar" / "Longo prazo" = previdência
+- "Proteger" / "Segurança" / "Não perder" = proteção
+
+IMPORTANTE: NUNCA transferir para humano se lead não entender - SEMPRE reformular primeiro!
 
 PRÓXIMO PASSO: Ir direto para agendamento
 """,
@@ -346,6 +371,61 @@ Responda em JSON:
                 "qualificacao_score": 50,
                 "principais_pontos": []
             }
+    
+    def _detectar_nao_compreensao(self, mensagem: str) -> bool:
+        """Detecta se o lead não entendeu a pergunta"""
+        frases_nao_compreensao = [
+            "não entendi", "como assim", "não sei", "não entendo",
+            "o que você quer dizer", "explica melhor", "não compreendi",
+            "pode explicar", "não captei", "não tô entendendo"
+        ]
+        
+        mensagem_lower = mensagem.lower().strip()
+        return any(frase in mensagem_lower for frase in frases_nao_compreensao)
+    
+    def _gerar_reformulacao_especifica(self, estado: str, lead_nome: str, mensagem: str) -> Dict[str, Any]:
+        """Gera reformulação específica quando lead não entende"""
+        
+        reformulacoes = {
+            'situacao': {
+                'mensagem': f"Deixa eu explicar melhor, {lead_nome}! É simples: você já tem dinheiro investido em algum lugar (banco, poupança, fundos) ou ainda não começou a investir?",
+                'acao': 'continuar',
+                'proximo_estado': 'patrimonio'
+            },
+            'patrimonio': {
+                'mensagem': f"Vou ser mais claro, {lead_nome}! É assim: você tem uma QUANTIA PEQUENA pra investir (até 100 mil), MÉDIA (100 a 500 mil), ou uma QUANTIA GRANDE (mais de 500 mil)?",
+                'acao': 'continuar', 
+                'proximo_estado': 'objetivo'
+            },
+            'objetivo': {
+                'mensagem': f"É simples, {lead_nome}! Imagina que você tem 100 mil reais. Você prefere:\n1️⃣ Que vire 200 mil em alguns anos (CRESCIMENTO)\n2️⃣ Que te pague uns 800 reais todo mês (RENDA)\n3️⃣ Que fique seguro pra aposentadoria (LONGO PRAZO)",
+                'acao': 'continuar',
+                'proximo_estado': 'agendamento'
+            },
+            'agendamento': {
+                'mensagem': f"Vou explicar diferente, {lead_nome}! Quero te conectar com um consultor especialista pra uma conversa de 30 minutos, gratuita e sem compromisso. Pode ser hoje à tarde, amanhã de manhã...?",
+                'acao': 'agendar',
+                'proximo_estado': 'finalizado'
+            }
+        }
+        
+        reformulacao = reformulacoes.get(estado, {
+            'mensagem': f"Me desculpa, {lead_nome}! Vou te conectar com um consultor humano que vai te explicar melhor. Um momento! 😊",
+            'acao': 'transferir_humano',
+            'proximo_estado': 'transferido'
+        })
+        
+        logger.info("Reformulação específica gerada", estado=estado, reformulacao=reformulacao['mensagem'][:100])
+        
+        return {
+            'success': True,
+            'resposta': reformulacao['mensagem'],
+            'acao': reformulacao['acao'],
+            'proximo_estado': reformulacao['proximo_estado'],
+            'contexto_atualizado': {},
+            'score_parcial': 30,  # Score moderado para reformulação
+            'reformulacao_usada': True
+        }
     
     def _verificar_fallback(self, session_id: str, mensagem: str, estado: str, lead_nome: str) -> Optional[Dict[str, Any]]:
         """Verifica se deve usar fallback para evitar loops"""
