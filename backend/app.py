@@ -21,6 +21,31 @@ from backend.services.whatsapp_service import WhatsAppService
 from backend.services.qualification_service import QualificationService
 from backend.services.lead_detector import LeadDetectorService
 from backend.services.google_sheets_service import GoogleSheetsService
+import time
+
+# Cache para deduplicação de mensagens (em memória)
+message_cache = {}
+CACHE_EXPIRY_SECONDS = 300  # 5 minutos
+
+def cleanup_message_cache():
+    """Remove mensagens expiradas do cache"""
+    current_time = time.time()
+    expired_keys = [key for key, timestamp in message_cache.items() 
+                   if current_time - timestamp > CACHE_EXPIRY_SECONDS]
+    for key in expired_keys:
+        del message_cache[key]
+
+def is_duplicate_message(message_id, telefone):
+    """Verifica se a mensagem já foi processada"""
+    cleanup_message_cache()
+    cache_key = f"{telefone}:{message_id}"
+    
+    if cache_key in message_cache:
+        return True
+    
+    # Marcar mensagem como processada
+    message_cache[cache_key] = time.time()
+    return False
 
 # Configuração de logging estruturado
 structlog.configure(
@@ -120,10 +145,10 @@ def webhook_whatsapp():
         # Log detalhado para debug de eventos
         logger.info("Evento recebido para análise", event_type=event_type, payload_keys=list(payload.keys()) if payload else [])
         
-        # Aceitar mais tipos de eventos de mensagem para debug
-        valid_events = ['message', 'message.any', 'message.text', 'message.received', 'message.new']
+        # Aceitar apenas eventos 'message' para evitar duplicação (message.any causa múltiplos processamentos)
+        valid_events = ['message']
         if event_type not in valid_events:
-            logger.info("Evento ignorado", event_type=event_type, valid_events=valid_events)
+            logger.info("Evento ignorado para evitar duplicação", event_type=event_type, valid_events=valid_events)
             return jsonify({'status': 'ignored', 'event_type': event_type}), 200
         
         # Validar estrutura da mensagem WAHA
@@ -152,6 +177,15 @@ def webhook_whatsapp():
         
         telefone = payload['from']
         mensagem = payload['body']
+        
+        # Verificar deduplicação de mensagens
+        message_id = payload.get('id', f"{telefone}_{int(time.time())}")
+        if is_duplicate_message(message_id, telefone):
+            logger.info("Mensagem duplicada ignorada", 
+                       telefone=telefone, 
+                       message_id=message_id,
+                       mensagem=mensagem[:50])
+            return jsonify({'status': 'duplicate_message'}), 200
         
         # Extrair nome do contato se disponível
         nome_contato = None

@@ -177,6 +177,17 @@ class QualificationService:
                     'message': 'Mensagem duplicada ignorada'
                 }
             
+            # Verificar se há mensagem enviada muito recentemente para evitar múltiplas respostas
+            if self._tem_mensagem_enviada_recente(sessao['id'], 8):
+                logger.info("Mensagem enviada muito recente, evitando spam", 
+                           lead_id=lead_id,
+                           session_id=sessao['id'])
+                return {
+                    'success': True,
+                    'message': 'Aguardando intervalo entre mensagens',
+                    'skipped': True
+                }
+            
             # Registrar mensagem recebida
             self._registrar_mensagem(sessao['id'], lead_id, mensagem, 'recebida')
             
@@ -782,6 +793,79 @@ Sucesso na sua jornada financeira! 💪
             4: 'interesse'
         }
         return tipos.get(numero_pergunta, 'geral')
+    
+    def _mensagem_ja_processada(self, session_id: str, mensagem: str, segundos: int) -> bool:
+        """Verifica se a mesma mensagem já foi processada recentemente"""
+        try:
+            from datetime import datetime, timezone, timedelta
+            
+            # Buscar mensagens recentes da sessão
+            mensagens = self.message_repo.get_session_messages(session_id)
+            
+            if not mensagens:
+                return False
+            
+            # Verificar se há mensagem idêntica nos últimos X segundos
+            limite_tempo = datetime.now(timezone.utc) - timedelta(seconds=segundos)
+            
+            for msg in reversed(mensagens):  # Mais recente primeiro
+                try:
+                    msg_time = datetime.fromisoformat(msg['created_at'].replace('Z', '+00:00'))
+                    
+                    # Se mensagem é muito antiga, parar busca
+                    if msg_time < limite_tempo:
+                        break
+                    
+                    # Se é mensagem recebida com mesmo conteúdo
+                    if (msg.get('tipo') == 'recebida' and 
+                        msg.get('conteudo', '').strip().lower() == mensagem.strip().lower()):
+                        return True
+                        
+                except Exception as e:
+                    logger.warning("Erro ao verificar timestamp de mensagem", error=str(e))
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            logger.error("Erro ao verificar mensagem duplicada", error=str(e))
+            return False
+    
+    def _tem_mensagem_enviada_recente(self, session_id: str, segundos: int) -> bool:
+        """Verifica se há mensagem enviada recentemente para evitar spam"""
+        try:
+            from datetime import datetime, timezone, timedelta
+            
+            # Buscar mensagens da sessão
+            mensagens = self.message_repo.get_session_messages(session_id)
+            
+            if not mensagens:
+                return False
+            
+            # Verificar se há mensagem enviada nos últimos X segundos
+            limite_tempo = datetime.now(timezone.utc) - timedelta(seconds=segundos)
+            
+            for msg in reversed(mensagens):  # Mais recente primeiro
+                try:
+                    msg_time = datetime.fromisoformat(msg['created_at'].replace('Z', '+00:00'))
+                    
+                    # Se mensagem é muito antiga, parar busca
+                    if msg_time < limite_tempo:
+                        break
+                    
+                    # Se é mensagem enviada recente
+                    if msg.get('tipo') == 'enviada':
+                        return True
+                        
+                except Exception as e:
+                    logger.warning("Erro ao verificar timestamp de mensagem enviada", error=str(e))
+                    continue
+            
+            return False
+            
+        except Exception as e:
+            logger.error("Erro ao verificar mensagem enviada recente", error=str(e))
+            return False
 
 
 
