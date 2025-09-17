@@ -172,7 +172,7 @@ def webhook_whatsapp():
             novo_lead = Lead(
                 nome=nome_temporario,
                 telefone=telefone,
-                canal='youtube',  # Canal válido conforme constraint do banco
+                canal='whatsapp',  # Canal correto para mensagens via WhatsApp
                 status='novo'
             )
             
