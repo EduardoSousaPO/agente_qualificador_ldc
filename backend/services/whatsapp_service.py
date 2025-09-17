@@ -328,8 +328,11 @@ Mande qualquer mensagem para reativar nosso chat! 😊
     
     def _limpar_telefone(self, telefone: str) -> str:
         """Limpa e formata número de telefone"""
+        if not telefone:
+            raise ValueError("Telefone não pode ser None ou vazio")
+        
         # Remove caracteres não numéricos
-        telefone_limpo = ''.join(filter(str.isdigit, telefone))
+        telefone_limpo = ''.join(filter(str.isdigit, str(telefone)))
         
         # Adiciona código do país se não tiver
         if len(telefone_limpo) == 11 and telefone_limpo.startswith('11'):

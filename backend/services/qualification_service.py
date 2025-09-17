@@ -300,8 +300,13 @@ Vamos começar? 😊"""
                 return resposta_ia
             
             # Enviar resposta
+            telefone_lead = lead.get('telefone')
+            if not telefone_lead:
+                logger.error("Telefone do lead não encontrado", lead_id=lead_id, lead=lead)
+                return {'success': False, 'error': 'Telefone do lead não encontrado'}
+            
             resultado_envio = self.whatsapp_service.enviar_mensagem(
-                telefone=lead['telefone'],
+                telefone=telefone_lead,
                 mensagem=resposta_ia['resposta']
             )
             
