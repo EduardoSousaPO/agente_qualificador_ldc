@@ -268,3 +268,4 @@ Content-Type: application/json
 ### **CRM não recebendo dados**
 - Verifique se planilha CRM está compartilhada
 - Confirme variável `GOOGLE_CRM_SHEETS_ID`
+

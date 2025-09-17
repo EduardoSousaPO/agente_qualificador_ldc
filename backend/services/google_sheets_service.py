@@ -372,3 +372,4 @@ class GoogleSheetsService:
         except Exception as e:
             logger.error("Erro ao testar conexão Google Sheets", error=str(e))
             return {'success': False, 'error': str(e)}
+

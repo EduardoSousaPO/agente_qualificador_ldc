@@ -157,9 +157,35 @@ def webhook_whatsapp():
         lead_data = lead_repo.get_lead_by_phone(telefone)
         
         if not lead_data:
-            # Lead não encontrado - pode ser resposta a uma mensagem nossa
-            logger.info("Mensagem de número não cadastrado", telefone=telefone)
-            return jsonify({'status': 'lead_not_found'}), 200
+            # Lead não encontrado - criar automaticamente
+            logger.info("Criando novo lead automaticamente", telefone=telefone)
+            
+            # Extrair nome temporário do telefone
+            numero_limpo = ''.join(filter(str.isdigit, telefone))
+            if len(numero_limpo) >= 4:
+                sufixo = numero_limpo[-4:]
+                nome_temporario = f"Lead {sufixo}"
+            else:
+                nome_temporario = f"Lead {numero_limpo}"
+            
+            # Criar novo lead
+            novo_lead = Lead(
+                nome=nome_temporario,
+                telefone=telefone,
+                canal='whatsapp',
+                status='novo'
+            )
+            
+            lead_data = lead_repo.create_lead(novo_lead)
+            
+            if not lead_data:
+                logger.error("Falha ao criar novo lead automaticamente", telefone=telefone)
+                return jsonify({'status': 'failed_to_create_lead'}), 500
+            
+            logger.info("Novo lead criado com sucesso", 
+                       lead_id=lead_data.get('id'), 
+                       nome=nome_temporario, 
+                       telefone=telefone)
         
         # Processar mensagem recebida
         resultado = qualification_service.processar_mensagem_recebida(
