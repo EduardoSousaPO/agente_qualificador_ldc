@@ -305,8 +305,8 @@ Vamos começar? 😊"""
                 return {'success': False, 'error': 'Telefone do lead não encontrado'}
             
             resultado_envio = self.whatsapp_service.enviar_mensagem(
-                telefone=telefone_lead,
-                mensagem=resposta_ia['resposta']
+                telefone_lead,
+                resposta_ia['resposta']
             )
             
             if not resultado_envio['success']:
