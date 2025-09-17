@@ -165,11 +165,23 @@ def webhook_whatsapp():
         # Log detalhado para debug de eventos
         logger.info("Evento recebido para análise", event_type=event_type, payload_keys=list(payload.keys()) if payload else [])
         
-        # Aceitar apenas eventos 'message' para evitar duplicação (message.any causa múltiplos processamentos)
-        valid_events = ['message']
+        # Aceitar eventos específicos (message.any removido para evitar duplicação)
+        valid_events = ['message', 'message.ack', 'message.waiting', 'message.revoked', 'session.status']
         if event_type not in valid_events:
-            logger.info("Evento ignorado para evitar duplicação", event_type=event_type, valid_events=valid_events)
+            logger.info("Evento ignorado", event_type=event_type, valid_events=valid_events)
             return jsonify({'status': 'ignored', 'event_type': event_type}), 200
+        
+        # Processar eventos especiais
+        if event_type == 'message.ack':
+            return handle_message_ack(payload)
+        elif event_type == 'message.waiting':
+            return handle_message_waiting(payload)
+        elif event_type == 'message.revoked':
+            return handle_message_revoked(payload)
+        elif event_type == 'session.status':
+            return handle_session_status(payload)
+        
+        # Continuar com processamento normal para evento 'message'
         
         # Validar estrutura da mensagem WAHA
         logger.info("Validando payload", 
@@ -606,6 +618,108 @@ def enviar_resultado_crm():
             'success': False,
             'error': str(e)
         }), 500
+
+
+def handle_message_ack(payload):
+    """Processa confirmações de entrega de mensagens"""
+    try:
+        ack_type = payload.get('ack')  # sent, delivered, read
+        message_id = payload.get('id')
+        chat_id = payload.get('chatId', '')
+        
+        logger.info("Confirmação de entrega recebida", 
+                   message_id=message_id, 
+                   ack_type=ack_type, 
+                   chat_id=chat_id)
+        
+        # Aqui você pode implementar lógica para:
+        # - Atualizar status da mensagem no banco
+        # - Detectar falhas de entrega
+        # - Implementar reenvio automático se necessário
+        
+        if ack_type in ['failed', 'error']:
+            logger.warning("Falha na entrega da mensagem", 
+                          message_id=message_id, 
+                          ack_type=ack_type)
+            # TODO: Implementar lógica de reenvio
+        
+        return jsonify({'status': 'ack_processed', 'ack_type': ack_type}), 200
+        
+    except Exception as e:
+        logger.error("Erro ao processar confirmação de entrega", error=str(e))
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
+def handle_message_waiting(payload):
+    """Processa mensagens na fila de envio"""
+    try:
+        message_id = payload.get('id')
+        chat_id = payload.get('chatId', '')
+        
+        logger.info("Mensagem na fila de envio", 
+                   message_id=message_id, 
+                   chat_id=chat_id)
+        
+        # Aqui você pode implementar lógica para:
+        # - Controlar velocidade de envio
+        # - Evitar spam por envios múltiplos
+        # - Monitorar fila de mensagens
+        
+        return jsonify({'status': 'waiting_processed'}), 200
+        
+    except Exception as e:
+        logger.error("Erro ao processar mensagem na fila", error=str(e))
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
+def handle_message_revoked(payload):
+    """Processa mensagens revogadas/deletadas"""
+    try:
+        message_id = payload.get('id')
+        chat_id = payload.get('chatId', '')
+        
+        logger.info("Mensagem revogada", 
+                   message_id=message_id, 
+                   chat_id=chat_id)
+        
+        # Aqui você pode implementar lógica para:
+        # - Registrar mensagens deletadas
+        # - Atualizar histórico de conversa
+        # - Notificar sobre mensagens importantes deletadas
+        
+        return jsonify({'status': 'revoked_processed'}), 200
+        
+    except Exception as e:
+        logger.error("Erro ao processar mensagem revogada", error=str(e))
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
+def handle_session_status(payload):
+    """Processa mudanças de status da sessão WhatsApp"""
+    try:
+        status = payload.get('status')
+        session_name = payload.get('name')
+        
+        logger.info("Status da sessão alterado", 
+                   session_name=session_name, 
+                   status=status)
+        
+        # Aqui você pode implementar lógica para:
+        # - Monitorar saúde da conexão WhatsApp
+        # - Alertar sobre desconexões
+        # - Reconectar automaticamente se necessário
+        
+        if status in ['DISCONNECTED', 'FAILED']:
+            logger.warning("Sessão WhatsApp com problema", 
+                          session_name=session_name, 
+                          status=status)
+            # TODO: Implementar alertas ou reconexão
+        
+        return jsonify({'status': 'session_status_processed', 'session_status': status}), 200
+        
+    except Exception as e:
+        logger.error("Erro ao processar status da sessão", error=str(e))
+        return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
 if __name__ == '__main__':

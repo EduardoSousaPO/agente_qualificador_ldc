@@ -149,8 +149,7 @@ class QualificationService:
                         contexto={},
                         ativa=True
                     )
-                    sessao_id = self.session_repo.create_session(nova_sessao)
-                    sessao = self.session_repo.get_session(sessao_id)
+                    sessao = self.session_repo.create_session(nova_sessao)
                     
                     if not sessao:
                         logger.error("Erro ao criar nova sessão", lead_id=lead_id)
@@ -159,7 +158,7 @@ class QualificationService:
                             'error': 'Erro ao criar sessão'
                         }
                     
-                    logger.info("Nova sessão criada", lead_id=lead_id, session_id=sessao_id)
+                    logger.info("Nova sessão criada", lead_id=lead_id, session_id=sessao['id'])
             
             # Verificar timeout da sessão
             if self._verificar_timeout_sessao(sessao):
@@ -604,9 +603,9 @@ Vamos começar? 😊"""
                 }
         else:
             # Todas as perguntas respondidas - calcular score
-            return self._finalizar_qualificacao(sessao, lead_id, contexto)
+            return self._finalizar_qualificacao_com_score(sessao, lead_id, contexto)
     
-    def _finalizar_qualificacao(self, sessao: Dict[str, Any], lead_id: str, contexto: Dict[str, Any]) -> Dict[str, Any]:
+    def _finalizar_qualificacao_com_score(self, sessao: Dict[str, Any], lead_id: str, contexto: Dict[str, Any]) -> Dict[str, Any]:
         """Finaliza processo de qualificação calculando score"""
         try:
             telefone = contexto.get('telefone')
