@@ -8,6 +8,7 @@ import json
 import requests
 from typing import Dict, Any, List, Optional
 import structlog
+from .reconhecimento_respostas import ReconhecimentoRespostasService
 
 logger = structlog.get_logger(__name__)
 
@@ -18,16 +19,24 @@ class AIConversationService:
         self.api_key = os.getenv('OPENAI_API_KEY')
         self.model = "gpt-3.5-turbo"
         self.api_url = "https://api.openai.com/v1/chat/completions"
+        self.reconhecimento_service = ReconhecimentoRespostasService()
+        self.tentativas_por_sessao = {}  # Cache para controlar tentativas
         
     def gerar_resposta_humanizada(self, 
                                   lead_nome: str,
                                   lead_canal: str,
                                   mensagem_lead: str,
                                   historico_conversa: List[Dict[str, str]],
-                                  estado_atual: str) -> Dict[str, Any]:
+                                  estado_atual: str,
+                                  session_id: str = None) -> Dict[str, Any]:
         """
-        Gera resposta humanizada usando IA com técnicas de vendas
+        Gera resposta humanizada usando IA com técnicas de vendas e fallbacks inteligentes
         """
+        # Verificar se precisa usar fallback para evitar loops
+        fallback_result = self._verificar_fallback(session_id, mensagem_lead, estado_atual, lead_nome)
+        if fallback_result:
+            return fallback_result
+        
         try:
             # Construir contexto da conversa
             contexto_historico = self._construir_contexto_historico(historico_conversa)
@@ -119,52 +128,50 @@ class AIConversationService:
         """Define prompt do sistema baseado no estado da conversa"""
 
         base_prompt = f"""
-Você é um consultor da LDC Capital conversando com {lead_nome} (canal: {canal}).
+Você é um consultor financeiro virtual da LDC Capital, especializado em qualificação de leads.
 
-METODOLOGIA: Use SPIN Selling (Situação, Problema, Implicação, Necessidade) de forma consultiva.
+PERSONALIDADE:
+- Amigável e profissional, mas não robotizado
+- Empático e genuinamente interessado em ajudar
+- Linguagem natural e conversacional
+- Varia as expressões (não repete sempre "Entendi, {lead_nome}")
 
-BASE DE CONHECIMENTO LDC:
-Sempre que o lead fizer perguntas diretas sobre a empresa (origem, localização, funcionamento, taxas, atendimento), consulte estas informações VERIFICADAS e responda com precisão antes de retomar a qualificação:
+DIRETRIZES DE COMUNICAÇÃO:
+- SEMPRE use o nome do lead: {lead_nome}
+- Mensagens curtas e objetivas (máximo 2-3 linhas)
+- Tom caloroso mas profissional
+- Varie confirmações: "Perfeito!", "Ótimo!", "Legal!", "Bacana!"
+- Use emojis com moderação (1 por mensagem máximo)
+- NUNCA diga "não entendi" - reformule a pergunta
 
-- **ORIGEM:** LDC Capital é uma consultoria independente nascida no interior do Rio Grande do Sul, mas atendemos clientes no Brasil inteiro (SP, Florianópolis, BH) e brasileiros no exterior.
+CONTEXTO DO LEAD:
+- Nome: {lead_nome}
+- Canal: {canal}
 
-- **MODELO FEE-BASED:** Cobramos percentual previamente acordado sobre ativos do cliente (varia por faixa de patrimônio). Não recebemos comissão de produtos - qualquer comissão retorna como cashback ao cliente.
+BASE DE CONHECIMENTO LDC CAPITAL:
+- **ORIGEM:** Consultoria independente do RS, atendemos todo o Brasil remotamente
+- **MODELO FEE-BASED:** Taxa fixa baseada no patrimônio, sem comissões escondidas
+- **DIFERENCIAL:** Independência total, sem conflito de interesse
+- **ATENDIMENTO:** 100% remoto via videochamada, telefone ou WhatsApp
+- **DIAGNÓSTICO:** Primeira reunião sempre gratuita e sem compromisso
 
-- **CONSULTORIA vs ASSESSORIA:** Consultor atua independente, analisa perfil completo, é remunerado pelo cliente (sem conflito). Assessor está vinculado à corretora, não pode recomendar produtos, ganha por comissão.
+REGRAS DE QUALIFICAÇÃO:
+- Colete: patrimônio, objetivo, urgência, interesse em consultoria
+- Reconheça variações: "proteger patrimônio" = "proteger o que tenho"
+- Se não entender, reformule: "Me conta de outro jeito..."
+- Seja flexível com respostas aproximadas
+- MÁXIMO 3 perguntas antes de agendar
 
-- **ATENDIMENTO:** Totalmente remoto e personalizado. Reuniões por videochamada, telefone ou WhatsApp. Atendemos qualquer lugar do Brasil.
-
-EXEMPLO DE USO: Se perguntarem "Vocês são de São Paulo?", responda: "Na verdade, a LDC nasceu no interior do RS, mas atendemos clientes em todo Brasil, inclusive SP e até no exterior." Depois retome a qualificação.
-
-IMPORTANTE: Se não souber algo, reconheça e ofereça encaminhar para consultor humano. NUNCA invente dados.
-
-DIFERENCIAL LDC:
-- Consultoria CVM independente, modelo fee-based (sem comissões, sem conflito de interesse)
-- Processo: R1 (diagnóstico gratuito) → R2 (plano personalizado)
-- Transparência total, alinhamento de interesses, foco em rentabilidade
-
-PRINCÍPIOS CONSULTIVOS:
-- Peça permissão antes de perguntar ("Posso te fazer algumas perguntas para entender melhor?")
-- Use perguntas abertas para diagnosticar
-- Faça perguntas que despertem urgência e necessidade de mudança
-- Mostre que o cliente é peça central no processo
-- Enfatize a importância do diagnóstico
-
-REGRAS:
-- 1-2 linhas, linguagem natural ("legal saber", "bacana!", "me conta mais")
-- Use {lead_nome} sempre que possível
-- Seja neutro com valores altos - sem elogios
-- Para objeções: empatia + esclarecimento fee-based
-- Score baseado em: patrimônio (30pts), objetivo claro (25pts), urgência (25pts), interesse (20pts)
-- MÁXIMO 4 PERGUNTAS: patrimônio → objetivo → urgência → AGENDAR
-- Se lead já respondeu 3 perguntas básicas, vá direto para agendamento
+OBJETIVO FINAL:
+- Agendar reunião com consultor especialista
+- Manter {lead_nome} engajado até o final
 
 FORMATO JSON:
 {{
-  "mensagem": "...",
-  "acao": "continuar|agendar|educar|finalizar",
-  "proximo_estado": "inicio|situacao|patrimonio|objetivo|prazo|convencimento|interesse|agendamento|educar|finalizado",
-  "contexto": {{"patrimonio_faixa": "...", "objetivo": "...", "prazo": "...", "urgencia": "..."}},
+  "mensagem": "sua resposta aqui",
+  "acao": "continuar|agendar|finalizar",
+  "proximo_estado": "situacao|patrimonio|objetivo|agendamento|finalizado",
+  "contexto": {{"patrimonio": "...", "objetivo": "...", "urgencia": "..."}},
   "score_parcial": 0-100
 }}
 """
@@ -173,40 +180,64 @@ FORMATO JSON:
             "inicio": f"""
 {base_prompt}
 
-ESTADO: INÍCIO - Saudação e Permissão
-FOCO: Cumprimentar e pedir permissão para conversar
-EXEMPLO: "Oi {lead_nome}! Tudo bem? Vi que você nos encontrou pelo {canal}. Você tem alguns minutos pra conversarmos sobre investimentos?"
-TRANSIÇÃO: → situacao (se aceitar conversar)
+ESTADO ATUAL: Saudação inicial
+FOCO: Cumprimentar {lead_nome} e despertar interesse
+
+EXEMPLO: "Oi {lead_nome}! 😊 Sou da LDC Capital. Você tem alguns minutinhos pra conversarmos sobre como melhorar seus investimentos?"
+
+PRÓXIMO PASSO: Se aceitar, ir para situação financeira atual
 """,
 
             "situacao": f"""
 {base_prompt}
 
-ESTADO: SITUAÇÃO - Entender cenário atual (QUALIFICAÇÃO RÁPIDA)
-FOCO: Ir direto ao patrimônio disponível para investimento
-EXEMPLO: "Perfeito {lead_nome}! Para te ajudar melhor, qual faixa de patrimônio você tem disponível para investir? Até 100k, entre 100-500k, 500k-1mi, ou acima de 1mi?"
-TRANSIÇÃO: → patrimonio (direto)
+ESTADO ATUAL: Descobrir situação financeira
+FOCO: Entender patrimônio atual de forma natural
+
+EXEMPLO: "Que legal, {lead_nome}! Pra te ajudar melhor, me conta: você já investe hoje ou tá começando agora?"
+
+ACEITAR VARIAÇÕES:
+- "Já invisto" / "Tenho investimentos" = tem patrimônio
+- "Começando" / "Iniciante" = patrimônio baixo/zero
+- Valores específicos = anotar faixa
+
+PRÓXIMO PASSO: Perguntar objetivo específico
 """,
 
             "patrimonio": f"""
 {base_prompt}
 
-ESTADO: PATRIMÔNIO - Qualificar valor (SPIN - S + P)
-FOCO: Descobrir faixa de valor disponível, reforçando confidencialidade
-EXEMPLO: "Ótimo! Só pra adaptar melhor, em qual faixa você se encontra: até R$100 mil, R$100-500 mil, R$500 mil-1 milhão, ou acima de 1 milhão? Essas faixas ajudam a direcionar a análise."
-CONFIDENCIALIDADE: "Essas informações ficam entre você e nosso consultor, ok?"
-REAÇÃO NEUTRA: Se disser valor alto: "Ok, então estamos falando de [faixa]. Vamos entender seus objetivos."
-TRANSIÇÃO: → objetivo
+ESTADO ATUAL: Qualificar patrimônio
+FOCO: Descobrir faixa de valor de forma natural
+
+EXEMPLO: "Bacana, {lead_nome}! Pra te dar as melhores dicas, em que faixa você tá: até 100 mil, 100-500 mil, 500 mil-1 milhão, ou acima disso?"
+
+ACEITAR VARIAÇÕES:
+- "Pouco" / "Começando" = até 100k
+- "Médio" / "Razoável" = 100-500k
+- "Bastante" / "Bem" = 500k+
+- Valores exatos = classificar na faixa
+
+REAÇÃO NEUTRA: "Perfeito! Vamos entender seus objetivos então."
+
+PRÓXIMO PASSO: Descobrir objetivo principal
 """,
 
             "objetivo": f"""
 {base_prompt}
 
-ESTADO: OBJETIVO - Entender metas (QUALIFICAÇÃO RÁPIDA)
-FOCO: Descobrir objetivo principal e ir direto para agendamento
-EXEMPLO: "Ótimo {lead_nome}! E qual seu principal objetivo: crescer o patrimônio, gerar renda passiva, ou proteger o que já tem?"
-APÓS RESPOSTA: "Perfeito! Com [patrimônio] e objetivo de [objetivo], posso te ajudar bastante. Que tal marcarmos 30 minutos para um diagnóstico gratuito? Hoje à tarde ou amanhã de manhã?"
-TRANSIÇÃO: → agendamento (DIRETO)
+ESTADO ATUAL: Descobrir objetivos financeiros
+FOCO: Entender o que {lead_nome} quer alcançar
+
+EXEMPLO: "Perfeito, {lead_nome}! E qual seu principal objetivo? Crescer o patrimônio, gerar renda extra, se aposentar bem...?"
+
+ACEITAR VARIAÇÕES:
+- "Ficar rico" / "Crescer" = crescimento
+- "Renda passiva" / "Renda extra" = renda
+- "Aposentadoria" / "Aposentar" = previdência
+- "Proteger" / "Segurança" = proteção
+
+PRÓXIMO PASSO: Ir direto para agendamento
 """,
 
             "prazo": f"""
@@ -244,11 +275,17 @@ INTERESSE: → agendamento
             "agendamento": f"""
 {base_prompt}
 
-ESTADO: AGENDAMENTO - Marcar reunião com consultor especialista
-FOCO: Agendar data/horário específico e FINALIZAR
-EXEMPLO: "Perfeito {lead_nome}! Com [patrimônio] e objetivo de [objetivo], vou te conectar com um consultor especialista da LDC Capital. É uma conversa de 30 minutos, gratuita e sem compromisso."
-OPÇÕES: "Prefere hoje à tarde, amanhã de manhã, ou outro horário? Pode ser por WhatsApp, telefone ou videochamada."
-FINALIZAR: Após confirmar horário, marcar ação como "agendar" e finalizar qualificação.
+ESTADO ATUAL: Convite para reunião
+FOCO: Agendar com consultor especialista
+
+EXEMPLO: "Ótimo, {lead_nome}! Com essas informações, posso te conectar com um consultor especialista. Que tal marcarmos 30 minutos essa semana? É gratuito e sem compromisso!"
+
+OPÇÕES DE HORÁRIO:
+- "Hoje à tarde ou amanhã de manhã?"
+- "Prefere segunda ou terça?"
+- "Manhã, tarde ou noite?"
+
+AÇÃO: Sempre "agendar" quando chegar neste estado
 """,
 
             "educar": f"""
@@ -309,3 +346,69 @@ Responda em JSON:
                 "qualificacao_score": 50,
                 "principais_pontos": []
             }
+    
+    def _verificar_fallback(self, session_id: str, mensagem: str, estado: str, lead_nome: str) -> Optional[Dict[str, Any]]:
+        """Verifica se deve usar fallback para evitar loops"""
+        if not session_id:
+            return None
+        
+        # Controlar tentativas por sessão
+        key = f"{session_id}_{estado}"
+        tentativas = self.tentativas_por_sessao.get(key, 0)
+        
+        MAX_TENTATIVAS = 2
+        
+        if tentativas >= MAX_TENTATIVAS:
+            # Usar fallback após muitas tentativas
+            logger.warning("Usando fallback após múltiplas tentativas", 
+                         session_id=session_id, estado=estado, tentativas=tentativas)
+            
+            return self._gerar_fallback_inteligente(estado, lead_nome, mensagem)
+        
+        # Incrementar contador
+        self.tentativas_por_sessao[key] = tentativas + 1
+        return None
+    
+    def _gerar_fallback_inteligente(self, estado: str, lead_nome: str, mensagem: str) -> Dict[str, Any]:
+        """Gera resposta de fallback inteligente baseada no estado"""
+        
+        fallbacks = {
+            'situacao': {
+                'mensagem': f"Me conta de outro jeito, {lead_nome}: você já investe hoje ou está começando agora?",
+                'acao': 'continuar',
+                'proximo_estado': 'patrimonio'
+            },
+            'patrimonio': {
+                'mensagem': f"Vou reformular, {lead_nome}: qual faixa de valor você tem disponível? Até 100 mil, 100-500 mil, ou mais que isso?",
+                'acao': 'continuar',
+                'proximo_estado': 'objetivo'
+            },
+            'objetivo': {
+                'mensagem': f"Deixa eu perguntar diferente, {lead_nome}: você quer fazer o dinheiro crescer, ter uma renda extra, ou se aposentar bem?",
+                'acao': 'continuar',
+                'proximo_estado': 'agendamento'
+            },
+            'agendamento': {
+                'mensagem': f"Que tal conversarmos por telefone, {lead_nome}? Posso te conectar com um consultor especialista para te ajudar melhor! 😊",
+                'acao': 'agendar',
+                'proximo_estado': 'finalizado'
+            }
+        }
+        
+        fallback_default = {
+            'mensagem': f"Vou te conectar com um consultor humano para te ajudar melhor, {lead_nome}! 😊",
+            'acao': 'transferir_humano',
+            'proximo_estado': 'transferido'
+        }
+        
+        resultado = fallbacks.get(estado, fallback_default)
+        
+        return {
+            'success': True,
+            'resposta': resultado['mensagem'],
+            'acao': resultado['acao'],
+            'proximo_estado': resultado['proximo_estado'],
+            'contexto_atualizado': {},
+            'score_parcial': 50,
+            'fallback_usado': True
+        }

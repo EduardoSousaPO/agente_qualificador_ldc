@@ -47,6 +47,26 @@ def is_duplicate_message(message_id, telefone):
     message_cache[cache_key] = time.time()
     return False
 
+def extrair_nome_lead(payload):
+    """Extrai nome real do lead do payload WhatsApp com priorização inteligente"""
+    nome_real = None
+    
+    # Prioridade: fromName > contact.name > pushName
+    if payload.get('fromName'):
+        nome_real = payload['fromName'].strip()
+    elif payload.get('contact', {}).get('name'):
+        nome_real = payload['contact']['name'].strip()
+    elif payload.get('pushName'):
+        nome_real = payload['pushName'].strip()
+    
+    if nome_real:
+        # Usar apenas primeiro nome para personalização
+        primeiro_nome = nome_real.split()[0] if nome_real else nome_real
+        # Capitalizar primeira letra
+        return primeiro_nome.capitalize() if primeiro_nome else None
+    
+    return None
+
 # Configuração de logging estruturado
 structlog.configure(
     processors=[
@@ -187,14 +207,8 @@ def webhook_whatsapp():
                        mensagem=mensagem[:50])
             return jsonify({'status': 'duplicate_message'}), 200
         
-        # Extrair nome do contato se disponível
-        nome_contato = None
-        if 'fromName' in payload and payload['fromName']:
-            nome_contato = payload['fromName']
-        elif 'contact' in payload and payload['contact'] and 'name' in payload['contact']:
-            nome_contato = payload['contact']['name']
-        elif 'pushName' in payload and payload['pushName']:
-            nome_contato = payload['pushName']
+        # Extrair nome do contato com função melhorada
+        nome_contato = extrair_nome_lead(payload)
         
         # Buscar ou criar lead
         lead_data = lead_repo.get_lead_by_phone(telefone)
@@ -203,20 +217,14 @@ def webhook_whatsapp():
             # Lead não encontrado - criar automaticamente
             logger.info("Criando novo lead automaticamente", telefone=telefone, nome_contato=nome_contato)
             
-            # Usar nome real do contato ou criar nome temporário
+            # Usar nome real do contato ou fallback mais humano
             if nome_contato:
-                # Usar apenas o primeiro nome
-                nome_lead = nome_contato.split()[0] if nome_contato else nome_contato
+                nome_lead = nome_contato
                 logger.info("Usando nome real do contato", nome_original=nome_contato, nome_usado=nome_lead)
             else:
-                # Fallback para nome temporário baseado no telefone
-                numero_limpo = ''.join(filter(str.isdigit, telefone))
-                if len(numero_limpo) >= 4:
-                    sufixo = numero_limpo[-4:]
-                    nome_lead = f"Lead {sufixo}"
-                else:
-                    nome_lead = f"Lead {numero_limpo}"
-                logger.info("Usando nome temporário", nome_usado=nome_lead)
+                # Fallback mais humano - evitar "Lead 1234"
+                nome_lead = "Amigo"  # Muito mais humano e acolhedor
+                logger.info("Usando fallback humano", nome_usado=nome_lead)
             
             # Criar novo lead
             novo_lead = Lead(

@@ -286,13 +286,14 @@ Vamos começar? 😊"""
             # Buscar histórico da conversa
             historico = self._buscar_historico_conversa(sessao['id'])
             
-            # Gerar resposta com IA
+            # Gerar resposta com IA (incluindo session_id para fallbacks)
             resposta_ia = self.ai_service.gerar_resposta_humanizada(
                 lead_nome=lead['nome'],
                 lead_canal=lead['canal'],
                 mensagem_lead=mensagem,
                 historico_conversa=historico,
-                estado_atual=sessao['estado']
+                estado_atual=sessao['estado'],
+                session_id=sessao['id']
             )
             
             if not resposta_ia['success']:
