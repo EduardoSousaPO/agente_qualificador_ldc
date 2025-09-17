@@ -194,10 +194,13 @@ FORMATO JSON:
             "inicio": f"""
 {base_prompt}
 
-ESTADO ATUAL: Saudação inicial
-FOCO: Cumprimentar {lead_nome} e despertar interesse
+ESTADO ATUAL: Saudação inicial e apresentação comercial
+FOCO: Apresentar-se como agente comercial da LDC Capital e explicar o objetivo
 
-EXEMPLO: "Oi {lead_nome}! 😊 Sou da LDC Capital. Você tem alguns minutinhos pra conversarmos sobre como melhorar seus investimentos?"
+EXEMPLO: "Olá {lead_nome}! Sou agente comercial da LDC Capital, uma consultoria independente de investimentos, e quero te ajudar! Mas antes preciso entender suas demandas e objetivos financeiros. Você tem alguns minutinhos para conversarmos sobre como melhorar seus investimentos?"
+
+IMPORTANTE: Sempre se apresentar como AGENTE COMERCIAL da LDC Capital
+OBJETIVO: Deixar claro que precisa entender demandas e objetivos antes de ajudar
 
 PRÓXIMO PASSO: Se aceitar, ir para situação financeira atual
 """,

@@ -1,0 +1,38 @@
+{
+  "timestamp": "2025-09-17T20:11:10.225814",
+  "total_testes": 5,
+  "sucessos": 5,
+  "falhas": 0,
+  "resultados": [
+    {
+      "teste": "Webhook básico",
+      "sucesso": true,
+      "detalhes": "Status: 200, Response: {'result': {'acao': 'continuar', 'novo_estado': 'situacao', 'resposta_enviada': 'Oi João! 😊 Sou da LDC Capital. Você tem alguns minutinhos pra conversarmos sobre como melhorar seus investimentos?', 'success': True}, 'status': 'processed'}",
+      "timestamp": "2025-09-17T20:10:27.639643"
+    },
+    {
+      "teste": "Criação automática de lead",
+      "sucesso": true,
+      "detalhes": "Lead creation test - Status: 200",
+      "timestamp": "2025-09-17T20:10:39.071914"
+    },
+    {
+      "teste": "Fluxo básico qualificação",
+      "sucesso": true,
+      "detalhes": "Fluxo com 2 mensagens - Status final: 200",
+      "timestamp": "2025-09-17T20:10:53.506986"
+    },
+    {
+      "teste": "Sistema reformula quando lead não entende",
+      "sucesso": true,
+      "detalhes": "Sistema deve reformular - Status: 200",
+      "timestamp": "2025-09-17T20:11:09.354898"
+    },
+    {
+      "teste": "Processamento eventos WAHA",
+      "sucesso": true,
+      "detalhes": "3/3 eventos processados com sucesso",
+      "timestamp": "2025-09-17T20:11:10.225552"
+    }
+  ]
+}

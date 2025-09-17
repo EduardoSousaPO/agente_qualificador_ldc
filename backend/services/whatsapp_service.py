@@ -58,9 +58,11 @@ São apenas 4 perguntas rápidas para entender seu perfil. Você tem alguns minu
             'whatsapp': """
 Olá! Tudo bem? 😊
 
-Sou consultor comercial da LDC Capital, uma consultoria independente de investimentos.
+Sou agente comercial da LDC Capital, uma consultoria independente de investimentos, e quero te ajudar!
 
-Você tem alguns minutos para conversarmos sobre investimentos? Posso te ajudar com um diagnóstico financeiro gratuito e personalizado.
+Mas antes preciso entender suas demandas e objetivos financeiros. Você tem alguns minutinhos para conversarmos sobre como melhorar seus investimentos?
+
+É rapidinho e pode fazer toda a diferença no seu futuro financeiro! 💰
             """.strip()
         }
         
