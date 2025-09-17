@@ -53,6 +53,14 @@ São só 4 perguntas que vão me ajudar a entender melhor seus objetivos. Vamos 
 Sou o assistente virtual da [EMPRESA] e quero te oferecer um diagnóstico financeiro completamente gratuito.
 
 São apenas 4 perguntas rápidas para entender seu perfil. Você tem alguns minutos? 📈
+            """.strip(),
+            
+            'whatsapp': """
+Olá! Tudo bem? 😊
+
+Sou consultor comercial da LDC Capital, uma consultoria independente de investimentos.
+
+Você tem alguns minutos para conversarmos sobre investimentos? Posso te ajudar com um diagnóstico financeiro gratuito e personalizado.
             """.strip()
         }
         

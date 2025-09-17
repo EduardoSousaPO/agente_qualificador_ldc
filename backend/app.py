@@ -153,24 +153,40 @@ def webhook_whatsapp():
         telefone = payload['from']
         mensagem = payload['body']
         
+        # Extrair nome do contato se disponível
+        nome_contato = None
+        if 'fromName' in payload and payload['fromName']:
+            nome_contato = payload['fromName']
+        elif 'contact' in payload and payload['contact'] and 'name' in payload['contact']:
+            nome_contato = payload['contact']['name']
+        elif 'pushName' in payload and payload['pushName']:
+            nome_contato = payload['pushName']
+        
         # Buscar ou criar lead
         lead_data = lead_repo.get_lead_by_phone(telefone)
         
         if not lead_data:
             # Lead não encontrado - criar automaticamente
-            logger.info("Criando novo lead automaticamente", telefone=telefone)
+            logger.info("Criando novo lead automaticamente", telefone=telefone, nome_contato=nome_contato)
             
-            # Extrair nome temporário do telefone
-            numero_limpo = ''.join(filter(str.isdigit, telefone))
-            if len(numero_limpo) >= 4:
-                sufixo = numero_limpo[-4:]
-                nome_temporario = f"Lead {sufixo}"
+            # Usar nome real do contato ou criar nome temporário
+            if nome_contato:
+                # Usar apenas o primeiro nome
+                nome_lead = nome_contato.split()[0] if nome_contato else nome_contato
+                logger.info("Usando nome real do contato", nome_original=nome_contato, nome_usado=nome_lead)
             else:
-                nome_temporario = f"Lead {numero_limpo}"
+                # Fallback para nome temporário baseado no telefone
+                numero_limpo = ''.join(filter(str.isdigit, telefone))
+                if len(numero_limpo) >= 4:
+                    sufixo = numero_limpo[-4:]
+                    nome_lead = f"Lead {sufixo}"
+                else:
+                    nome_lead = f"Lead {numero_limpo}"
+                logger.info("Usando nome temporário", nome_usado=nome_lead)
             
             # Criar novo lead
             novo_lead = Lead(
-                nome=nome_temporario,
+                nome=nome_lead,
                 telefone=telefone,
                 canal='whatsapp',  # Canal correto para mensagens via WhatsApp
                 status='novo'
@@ -184,8 +200,9 @@ def webhook_whatsapp():
             
             logger.info("Novo lead criado com sucesso", 
                        lead_id=lead_data.get('id'), 
-                       nome=nome_temporario, 
-                       telefone=telefone)
+                       nome=nome_lead, 
+                       telefone=telefone,
+                       nome_original=nome_contato)
         
         # Processar mensagem recebida
         resultado = qualification_service.processar_mensagem_recebida(
