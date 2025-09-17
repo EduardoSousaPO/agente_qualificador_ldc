@@ -134,6 +134,12 @@ Qual sua preferência? 🎯
     def enviar_mensagem(self, telefone: str, mensagem: str, tentativa: int = 1) -> Dict[str, Any]:
         """Envia mensagem via WAHA"""
         try:
+            # Delay para evitar bloqueio do número (3-8 segundos aleatório)
+            import random
+            delay = random.uniform(3, 8)
+            logger.info("Aguardando delay antes do envio", delay_segundos=delay, telefone=telefone)
+            time.sleep(delay)
+            
             # Limpar e formatar telefone
             telefone_limpo = self._limpar_telefone(telefone)
             

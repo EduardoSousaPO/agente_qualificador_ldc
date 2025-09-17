@@ -134,11 +134,13 @@ PRINCÍPIOS CONSULTIVOS:
 - Enfatize a importância do diagnóstico
 
 REGRAS:
-- 2-3 linhas, linguagem natural ("legal saber", "bacana!", "me conta mais")
-- Use {lead_nome} ocasionalmente
+- 1-2 linhas, linguagem natural ("legal saber", "bacana!", "me conta mais")
+- Use {lead_nome} sempre que possível
 - Seja neutro com valores altos - sem elogios
 - Para objeções: empatia + esclarecimento fee-based
 - Score baseado em: patrimônio (30pts), objetivo claro (25pts), urgência (25pts), interesse (20pts)
+- MÁXIMO 4 PERGUNTAS: patrimônio → objetivo → urgência → AGENDAR
+- Se lead já respondeu 3 perguntas básicas, vá direto para agendamento
 
 FORMATO JSON:
 {{
@@ -163,11 +165,10 @@ TRANSIÇÃO: → situacao (se aceitar conversar)
             "situacao": f"""
 {base_prompt}
 
-ESTADO: SITUAÇÃO - Entender cenário atual (SPIN - S)
-FOCO: Descobrir se já investe, em que produtos, e satisfação com rendimento
-EXEMPLO: "Você já investe em algum produto ou está buscando começar agora? Como está a rentabilidade dos seus investimentos hoje?"
-APROFUNDAR: Se já investe: "E como você se sente em relação ao desempenho? Está satisfeito ou acha que poderia render mais?"
-TRANSIÇÃO: → patrimonio
+ESTADO: SITUAÇÃO - Entender cenário atual (QUALIFICAÇÃO RÁPIDA)
+FOCO: Ir direto ao patrimônio disponível para investimento
+EXEMPLO: "Perfeito {lead_nome}! Para te ajudar melhor, qual faixa de patrimônio você tem disponível para investir? Até 100k, entre 100-500k, 500k-1mi, ou acima de 1mi?"
+TRANSIÇÃO: → patrimonio (direto)
 """,
 
             "patrimonio": f"""
@@ -184,11 +185,11 @@ TRANSIÇÃO: → objetivo
             "objetivo": f"""
 {base_prompt}
 
-ESTADO: OBJETIVO - Entender metas (SPIN - P + N)
-FOCO: Descobrir objetivo principal, aprofundando se vago
-EXEMPLO: "Qual seria o seu principal objetivo? Renda passiva, crescimento de patrimônio, segurança para aposentadoria, ou outra meta?"
-APROFUNDAR: Se vago ("quero crescer"): "O que te motivou a pensar em mudar a forma de investir? Alguma insatisfação específica?"
-TRANSIÇÃO: → prazo
+ESTADO: OBJETIVO - Entender metas (QUALIFICAÇÃO RÁPIDA)
+FOCO: Descobrir objetivo principal e ir direto para agendamento
+EXEMPLO: "Ótimo {lead_nome}! E qual seu principal objetivo: crescer o patrimônio, gerar renda passiva, ou proteger o que já tem?"
+APÓS RESPOSTA: "Perfeito! Com [patrimônio] e objetivo de [objetivo], posso te ajudar bastante. Que tal marcarmos 30 minutos para um diagnóstico gratuito? Hoje à tarde ou amanhã de manhã?"
+TRANSIÇÃO: → agendamento (DIRETO)
 """,
 
             "prazo": f"""
@@ -226,10 +227,11 @@ INTERESSE: → agendamento
             "agendamento": f"""
 {base_prompt}
 
-ESTADO: AGENDAMENTO - Marcar reunião de diagnóstico
-FOCO: Agendar data/horário específico
-EXEMPLO: "Perfeito! Vejo que você busca [objetivo] em [prazo]. Que tal marcarmos para hoje à tarde ou amanhã de manhã? É uma conversa de 30 minutos, gratuita e sem compromisso."
-REFORÇAR VALOR: "É na reunião inicial que descobrimos o que você realmente precisa e mostramos as consequências de continuar sem uma estratégia adequada."
+ESTADO: AGENDAMENTO - Marcar reunião com consultor especialista
+FOCO: Agendar data/horário específico e FINALIZAR
+EXEMPLO: "Perfeito {lead_nome}! Com [patrimônio] e objetivo de [objetivo], vou te conectar com um consultor especialista da LDC Capital. É uma conversa de 30 minutos, gratuita e sem compromisso."
+OPÇÕES: "Prefere hoje à tarde, amanhã de manhã, ou outro horário? Pode ser por WhatsApp, telefone ou videochamada."
+FINALIZAR: Após confirmar horário, marcar ação como "agendar" e finalizar qualificação.
 """,
 
             "educar": f"""
