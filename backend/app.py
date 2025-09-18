@@ -159,27 +159,39 @@ def webhook_whatsapp():
                    url=request.url)
         
         # Extrair dados da estrutura WAHA
-        payload = data.get('payload', {})
-        event_type = data.get('event', '')
+        # CORREÇÃO: WAHA pode enviar dados diretamente no root ou dentro de 'payload'
+        if 'payload' in data and data['payload']:
+            # Estrutura com payload wrapper
+            payload = data.get('payload', {})
+            event_type = data.get('event', '')
+        else:
+            # Estrutura direta (dados no root)
+            payload = data
+            event_type = data.get('event', '')
         
-        # Log detalhado para debug de eventos
-        logger.info("Evento recebido para análise", event_type=event_type, payload_keys=list(payload.keys()) if payload else [])
+        # Log detalhado para debug de estrutura
+        logger.info("Estrutura WAHA analisada", 
+                   event_type=event_type,
+                   has_payload_wrapper='payload' in data,
+                   payload_keys=list(payload.keys()) if payload else [],
+                   raw_data_keys=list(data.keys()),
+                   from_in_payload='from' in payload if payload else False,
+                   body_in_payload='body' in payload if payload else False)
         
-        # Aceitar eventos específicos (message.any removido para evitar duplicação)
-        valid_events = ['message', 'message.ack', 'message.waiting', 'message.revoked', 'session.status']
+        # Aceitar apenas eventos essenciais para WAHA Core
+        # message: mensagens recebidas (principal)
+        # session.status: status da sessão WhatsApp
+        # message.edited: mensagens editadas (WAHA 2025.6+)
+        valid_events = ['message', 'session.status', 'message.edited']
         if event_type not in valid_events:
             logger.info("Evento ignorado", event_type=event_type, valid_events=valid_events)
             return jsonify({'status': 'ignored', 'event_type': event_type}), 200
         
         # Processar eventos especiais (não processam mensagens)
-        if event_type == 'message.ack':
-            return handle_message_ack(payload)
-        elif event_type == 'message.waiting':
-            return handle_message_waiting(payload)
-        elif event_type == 'message.revoked':
-            return handle_message_revoked(payload)
-        elif event_type == 'session.status':
+        if event_type == 'session.status':
             return handle_session_status(payload)
+        elif event_type == 'message.edited':
+            return handle_message_edited(payload)
         
         # Só processar como mensagem se for evento 'message'
         if event_type != 'message':
@@ -644,78 +656,8 @@ def enviar_resultado_crm():
         }), 500
 
 
-def handle_message_ack(payload):
-    """Processa confirmações de entrega de mensagens"""
-    try:
-        ack_type = payload.get('ack')  # sent, delivered, read
-        message_id = payload.get('id')
-        chat_id = payload.get('chatId', '')
-        
-        logger.info("Confirmação de entrega recebida", 
-                   message_id=message_id, 
-                   ack_type=ack_type, 
-                   chat_id=chat_id)
-        
-        # Aqui você pode implementar lógica para:
-        # - Atualizar status da mensagem no banco
-        # - Detectar falhas de entrega
-        # - Implementar reenvio automático se necessário
-        
-        if ack_type in ['failed', 'error']:
-            logger.warning("Falha na entrega da mensagem", 
-                          message_id=message_id, 
-                          ack_type=ack_type)
-            # TODO: Implementar lógica de reenvio
-        
-        return jsonify({'status': 'ack_processed', 'ack_type': ack_type}), 200
-        
-    except Exception as e:
-        logger.error("Erro ao processar confirmação de entrega", error=str(e))
-        return jsonify({'status': 'error', 'error': str(e)}), 500
-
-
-def handle_message_waiting(payload):
-    """Processa mensagens na fila de envio"""
-    try:
-        message_id = payload.get('id')
-        chat_id = payload.get('chatId', '')
-        
-        logger.info("Mensagem na fila de envio", 
-                   message_id=message_id, 
-                   chat_id=chat_id)
-        
-        # Aqui você pode implementar lógica para:
-        # - Controlar velocidade de envio
-        # - Evitar spam por envios múltiplos
-        # - Monitorar fila de mensagens
-        
-        return jsonify({'status': 'waiting_processed'}), 200
-        
-    except Exception as e:
-        logger.error("Erro ao processar mensagem na fila", error=str(e))
-        return jsonify({'status': 'error', 'error': str(e)}), 500
-
-
-def handle_message_revoked(payload):
-    """Processa mensagens revogadas/deletadas"""
-    try:
-        message_id = payload.get('id')
-        chat_id = payload.get('chatId', '')
-        
-        logger.info("Mensagem revogada", 
-                   message_id=message_id, 
-                   chat_id=chat_id)
-        
-        # Aqui você pode implementar lógica para:
-        # - Registrar mensagens deletadas
-        # - Atualizar histórico de conversa
-        # - Notificar sobre mensagens importantes deletadas
-        
-        return jsonify({'status': 'revoked_processed'}), 200
-        
-    except Exception as e:
-        logger.error("Erro ao processar mensagem revogada", error=str(e))
-        return jsonify({'status': 'error', 'error': str(e)}), 500
+# Handlers não utilizados removidos para WAHA Core otimizado
+# Mantidos apenas: handle_session_status() e handle_message_edited()
 
 
 def handle_session_status(payload):
@@ -743,6 +685,28 @@ def handle_session_status(payload):
         
     except Exception as e:
         logger.error("Erro ao processar status da sessão", error=str(e))
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
+def handle_message_edited(payload):
+    """Processa mensagens editadas (WAHA 2025.6+)"""
+    try:
+        message_id = payload.get('id')
+        new_body = payload.get('body', '')
+        from_number = payload.get('from', '')
+        
+        logger.info("Mensagem editada detectada", 
+                   message_id=message_id,
+                   from_number=from_number,
+                   new_content=new_body[:50] + "..." if len(new_body) > 50 else new_body)
+        
+        # TODO: Implementar lógica para mensagens editadas se necessário
+        # Por exemplo: atualizar histórico, re-processar com IA, etc.
+        
+        return jsonify({'status': 'message_edited_processed'}), 200
+        
+    except Exception as e:
+        logger.error("Erro ao processar mensagem editada", error=str(e))
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
