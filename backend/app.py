@@ -273,7 +273,8 @@ def webhook_whatsapp():
                    body_in_payload='body' in payload if payload else False)
         
         # Aceitar apenas eventos essenciais para WAHA Core
-        # message: mensagens recebidas (principal)
+        # message: mensagens recebidas específicas
+        # message.any: todas as mensagens (inclui message)
         # session.status: status da sessão WhatsApp
         # message.edited: mensagens editadas (WAHA 2025.6+)
         valid_events = ['message', 'message.any', 'session.status', 'message.edited']
@@ -283,14 +284,19 @@ def webhook_whatsapp():
         
         # Processar eventos especiais (não processam mensagens)
         if event_type == 'session.status':
+            logger.info("Processando evento de status da sessão")
             return handle_session_status(payload)
         elif event_type == 'message.edited':
+            logger.info("Processando mensagem editada")
             return handle_message_edited(payload)
         
-        # Só processar como mensagem se for evento 'message'
-        if event_type != 'message':
+        # Processar mensagens: tanto 'message' quanto 'message.any' são válidos
+        if event_type not in ['message', 'message.any']:
             logger.info("Evento não é mensagem, ignorando processamento", event_type=event_type)
             return jsonify({'status': 'not_message_event'}), 200
+        
+        # Log do tipo de evento de mensagem processado
+        logger.info("Processando evento de mensagem", event_type=event_type)
         
         # Continuar com processamento normal para evento 'message'
         
@@ -316,7 +322,7 @@ def webhook_whatsapp():
             
             logger.info("🔍 PAYLOAD COMPLETO DEBUG", payload_debug=payload_debug)
         
-        # Log EXTRA para debug do problema do telefone
+        # Log EXTRA para debug do problema do telefone e payload completo
         logger.info("🚨 DEBUG TELEFONE", 
                    raw_data_keys=list(data.keys()),
                    payload_keys=list(payload.keys()) if payload else [],
@@ -324,6 +330,12 @@ def webhook_whatsapp():
                    from_value_in_data=data.get('from', 'AUSENTE'),
                    from_in_payload='from' in payload if payload else False,
                    from_value_in_payload=payload.get('from', 'AUSENTE') if payload else 'PAYLOAD_VAZIO')
+        
+        # Log do payload bruto completo (conforme sugestão do usuário)
+        logger.info("📋 PAYLOAD BRUTO COMPLETO", 
+                   payload_raw=str(data)[:500],  # Primeiros 500 chars para não sobrecarregar logs
+                   event_type=event_type,
+                   payload_size=len(str(data)))
         
         if not payload:
             logger.warning("Payload vazio", data=data)
