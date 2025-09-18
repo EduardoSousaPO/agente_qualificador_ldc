@@ -321,12 +321,13 @@ class AIConversationService:
                     contexto=ContextoConversa()
                 )
                 
-                passou, erros, resposta_final = self.guardrails_service.aplicar_guardrails(
+                passou, erros, resposta_corrigida = self.guardrails_service.aplicar_guardrails(
                     validation_result.resposta_corrigida, session_state, context.nome_lead
                 )
                 
-                if passou and resposta_final:
-                    return resposta_final
+                if passou:
+                    # Se passou nos guardrails, usar resposta corrigida se existe, senão a original
+                    return resposta_corrigida if resposta_corrigida else validation_result.resposta_corrigida
                 else:
                     logger.warning("Resposta falhou nos guardrails", errors=erros)
                     return validation_result.resposta_corrigida  # Retorna original se guardrails falharem
