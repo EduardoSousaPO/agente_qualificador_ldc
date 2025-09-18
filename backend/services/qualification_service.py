@@ -887,5 +887,41 @@ Sucesso na sua jornada financeira! 💪
             logger.error("Erro ao verificar mensagem enviada recente", error=str(e))
             return False
 
+    def _verificar_integridade_lead(self, lead: dict, lead_id: str) -> bool:
+        """Verifica se o lead tem todos os dados necessários"""
+        try:
+            # Campos obrigatórios
+            campos_obrigatorios = ['telefone', 'nome']
+            
+            for campo in campos_obrigatorios:
+                valor = lead.get(campo)
+                if not valor or str(valor).strip() == '':
+                    logger.error(f"Campo obrigatório ausente ou vazio", 
+                               campo=campo, 
+                               valor=repr(valor),
+                               lead_id=lead_id)
+                    return False
+            
+            # Validação específica do telefone
+            telefone = lead.get('telefone')
+            if telefone is None or telefone == 'null' or str(telefone).strip() == '':
+                logger.error("Telefone inválido detectado", 
+                           telefone=repr(telefone),
+                           telefone_type=type(telefone).__name__,
+                           lead_id=lead_id)
+                return False
+                
+            logger.info("Verificação de integridade do lead aprovada", 
+                       lead_id=lead_id,
+                       telefone=telefone,
+                       nome=lead.get('nome'))
+            return True
+            
+        except Exception as e:
+            logger.error("Erro na verificação de integridade do lead", 
+                        error=str(e), 
+                        lead_id=lead_id)
+            return False
+
 
 
