@@ -105,15 +105,15 @@ class AIConversationService:
             
             logger.info("Resposta gerada com sucesso", 
                        lead_nome=lead_nome, 
-                       estado=resposta_ia.proximo_estado.value,
-                       acao=resposta_ia.acao.value,
+                       estado=resposta_ia.proximo_estado,
+                       acao=resposta_ia.acao,
                        score=resposta_ia.score_parcial)
             
             return {
                 'success': True,
                 'resposta': resposta_ia.mensagem,
-                'acao': resposta_ia.acao.value,
-                'proximo_estado': resposta_ia.proximo_estado.value,
+                'acao': resposta_ia.acao,
+                'proximo_estado': resposta_ia.proximo_estado,
                 'contexto_atualizado': resposta_ia.contexto.model_dump(),
                 'score_parcial': resposta_ia.score_parcial,
                 'slots_preenchidos': session_state.slots_preenchidos(),
@@ -170,12 +170,12 @@ class AIConversationService:
         """Processa reformulação quando lead não entende"""
         
         # Incrementar tentativas de reformulação
-        key = f"{session_state.session_id}_{session_state.estado_atual.value}"
+        key = f"{session_state.session_id}_{session_state.estado_atual}"
         tentativas = self.tentativas_reformulacao.get(key, 0) + 1
         self.tentativas_reformulacao[key] = tentativas
         
         logger.info("Processando reformulação", 
-                   estado=session_state.estado_atual.value,
+                   estado=session_state.estado_atual,
                    tentativa=tentativas,
                    lead_nome=lead_nome)
         
@@ -205,8 +205,8 @@ class AIConversationService:
             return {
                 'success': True,
                 'resposta': resposta_reformulada.mensagem,
-                'acao': resposta_reformulada.acao.value,
-                'proximo_estado': resposta_reformulada.proximo_estado.value,
+                'acao': resposta_reformulada.acao,
+                'proximo_estado': resposta_reformulada.proximo_estado,
                 'contexto_atualizado': resposta_reformulada.contexto.model_dump(),
                 'score_parcial': resposta_reformulada.score_parcial,
                 'reformulacao_usada': True,
@@ -254,7 +254,7 @@ class AIConversationService:
             ultima_mensagem_lead=mensagem_lead,
             historico_compacto=[],  # Simplificado por ora
             tentativas_estado=self.tentativas_reformulacao.get(
-                f"{session_state.session_id}_{session_state.estado_atual.value}", 0
+                f"{session_state.session_id}_{session_state.estado_atual}", 0
             )
         )
         
@@ -398,8 +398,8 @@ class AIConversationService:
         return {
             'success': True,
             'resposta': fallback_resposta.mensagem,
-            'acao': fallback_resposta.acao.value,
-            'proximo_estado': fallback_resposta.proximo_estado.value,
+            'acao': fallback_resposta.acao,
+            'proximo_estado': fallback_resposta.proximo_estado,
             'contexto_atualizado': fallback_resposta.contexto.model_dump(),
             'score_parcial': fallback_resposta.score_parcial,
             'fallback_usado': True
@@ -428,7 +428,7 @@ class AIConversationService:
         session_state = self.session_cache[session_id]
         
         return {
-            'estado_atual': session_state.estado_atual.value,
+            'estado_atual': session_state.estado_atual,
             'mensagem_count': session_state.mensagem_count,
             'slots_preenchidos': session_state.slots_preenchidos(),
             'slots_faltantes': session_state.slots_faltantes(),
