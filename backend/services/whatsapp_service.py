@@ -331,7 +331,11 @@ Mande qualquer mensagem para reativar nosso chat! 😊
     def _limpar_telefone(self, telefone: str) -> str:
         """Limpa e formata número de telefone"""
         if not telefone:
-            raise ValueError("Telefone não pode ser None ou vazio")
+            logger.error("Telefone inválido recebido", 
+                        telefone=telefone, 
+                        telefone_type=type(telefone),
+                        telefone_repr=repr(telefone))
+            raise ValueError(f"Telefone não pode ser None ou vazio. Recebido: {repr(telefone)}")
         
         # Remove caracteres não numéricos
         telefone_limpo = ''.join(filter(str.isdigit, str(telefone)))

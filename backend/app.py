@@ -171,7 +171,7 @@ def webhook_whatsapp():
             logger.info("Evento ignorado", event_type=event_type, valid_events=valid_events)
             return jsonify({'status': 'ignored', 'event_type': event_type}), 200
         
-        # Processar eventos especiais
+        # Processar eventos especiais (não processam mensagens)
         if event_type == 'message.ack':
             return handle_message_ack(payload)
         elif event_type == 'message.waiting':
@@ -180,6 +180,11 @@ def webhook_whatsapp():
             return handle_message_revoked(payload)
         elif event_type == 'session.status':
             return handle_session_status(payload)
+        
+        # Só processar como mensagem se for evento 'message'
+        if event_type != 'message':
+            logger.info("Evento não é mensagem, ignorando processamento", event_type=event_type)
+            return jsonify({'status': 'not_message_event'}), 200
         
         # Continuar com processamento normal para evento 'message'
         

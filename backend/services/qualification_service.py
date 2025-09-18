@@ -282,6 +282,10 @@ Vamos começar? 😊"""
             
             lead = lead_data.data[0]
             
+            # Verificação de integridade do lead
+            if not self._verificar_integridade_lead(lead, lead_id):
+                return {'success': False, 'error': 'Lead com dados incompletos'}
+            
             # Buscar histórico da conversa
             historico = self._buscar_historico_conversa(sessao['id'])
             
@@ -300,8 +304,19 @@ Vamos começar? 😊"""
             
             # Enviar resposta
             telefone_lead = lead.get('telefone')
+            
+            # Log detalhado para debug
+            logger.info("Debug telefone lead", 
+                       lead_id=lead_id,
+                       telefone_lead=telefone_lead,
+                       lead_keys=list(lead.keys()) if lead else [],
+                       lead_data_sample={k: str(v)[:50] for k, v in lead.items() if k != 'id'} if lead else {})
+            
             if not telefone_lead:
-                logger.error("Telefone do lead não encontrado", lead_id=lead_id, lead=lead)
+                logger.error("Telefone do lead não encontrado", 
+                           lead_id=lead_id, 
+                           lead=lead,
+                           telefone_extraido=telefone_lead)
                 return {'success': False, 'error': 'Telefone do lead não encontrado'}
             
             resultado_envio = self.whatsapp_service.enviar_mensagem(
