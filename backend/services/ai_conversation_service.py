@@ -89,7 +89,7 @@ class AIConversationService:
             
             # Gerar resposta usando IA
             resposta_ia = self._gerar_resposta_ia(
-                session_state, mensagem_lead, lead_canal, proxima_acao, proximo_estado
+                session_state, mensagem_lead, lead_canal, proxima_acao, proximo_estado, lead_nome
             )
             
             if not resposta_ia:
@@ -241,7 +241,7 @@ class AIConversationService:
             return Acao.CONTINUAR, proximo_estado
     
     def _gerar_resposta_ia(self, session_state: SessionState, mensagem_lead: str,
-                          lead_canal: str, acao: Acao, proximo_estado: Estado) -> Optional[RespostaIA]:
+                          lead_canal: str, acao: Acao, proximo_estado: Estado, lead_nome: str) -> Optional[RespostaIA]:
         """Gera resposta usando IA com novo sistema de prompts"""
         
         # Construir contexto do prompt
