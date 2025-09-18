@@ -276,11 +276,34 @@ Vamos começar? 😊"""
             from backend.models.database_models import DatabaseConnection
             db_conn = DatabaseConnection()
             
+            # Log detalhado da consulta do lead
+            logger.info("Consultando lead no banco", lead_id=lead_id, lead_id_type=type(lead_id).__name__)
+            
             lead_data = db_conn.get_client().table('leads').select('*').eq('id', lead_id).execute()
+            
+            # Log do resultado da consulta
+            logger.info("Resultado da consulta lead", 
+                       data_exists=bool(lead_data.data),
+                       data_count=len(lead_data.data) if lead_data.data else 0,
+                       raw_response_keys=list(lead_data.__dict__.keys()) if hasattr(lead_data, '__dict__') else [])
+            
             if not lead_data.data:
+                logger.error("Lead não encontrado no banco", 
+                           lead_id=lead_id,
+                           consulta_executada=True,
+                           tabela="leads")
                 return {'success': False, 'error': 'Lead não encontrado'}
             
             lead = lead_data.data[0]
+            
+            # Log detalhado do lead encontrado
+            logger.info("Lead encontrado - dados completos", 
+                       lead_id=lead_id,
+                       lead_keys=list(lead.keys()),
+                       telefone_value=lead.get('telefone'),
+                       telefone_type=type(lead.get('telefone')).__name__,
+                       telefone_repr=repr(lead.get('telefone')),
+                       nome_value=lead.get('nome'))
             
             # Verificação de integridade do lead
             if not self._verificar_integridade_lead(lead, lead_id):

@@ -228,7 +228,20 @@ def webhook_whatsapp():
         nome_contato = extrair_nome_lead(payload)
         
         # Buscar ou criar lead
+        logger.info("Buscando lead por telefone", 
+                   telefone=telefone, 
+                   telefone_type=type(telefone).__name__,
+                   telefone_length=len(telefone) if telefone else 0)
+        
         lead_data = lead_repo.get_lead_by_phone(telefone)
+        
+        # Log do resultado da busca
+        logger.info("Resultado busca lead por telefone", 
+                   telefone=telefone,
+                   lead_encontrado=bool(lead_data),
+                   lead_id=lead_data.get('id') if lead_data else None,
+                   lead_telefone=lead_data.get('telefone') if lead_data else None,
+                   lead_nome=lead_data.get('nome') if lead_data else None)
         
         if not lead_data:
             # Lead não encontrado - criar automaticamente
@@ -262,6 +275,12 @@ def webhook_whatsapp():
                        nome=nome_lead, 
                        telefone=telefone,
                        nome_original=nome_contato)
+        
+        # Log antes do processamento
+        logger.info("Iniciando processamento IA", 
+                   lead_id=lead_data['id'],
+                   lead_telefone_atual=lead_data.get('telefone'),
+                   mensagem_length=len(mensagem) if mensagem else 0)
         
         # Processar mensagem recebida
         resultado = qualification_service.processar_mensagem_recebida(
