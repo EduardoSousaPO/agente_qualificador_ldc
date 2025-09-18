@@ -249,7 +249,7 @@ class AIConversationService:
             estado_atual=session_state.estado_atual,
             slots_preenchidos=session_state.slots_preenchidos(),
             slots_faltantes=session_state.slots_faltantes(),
-            nome_lead=session_state.lead_id.split('_')[0] if '_' in session_state.lead_id else "Amigo",
+            nome_lead=lead_nome,
             canal=lead_canal,
             ultima_mensagem_lead=mensagem_lead,
             historico_compacto=[],  # Simplificado por ora

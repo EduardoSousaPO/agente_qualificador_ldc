@@ -51,19 +51,47 @@ def extrair_nome_lead(payload):
     """Extrai nome real do lead do payload WhatsApp com priorização inteligente"""
     nome_real = None
     
-    # Prioridade: fromName > contact.name > pushName
-    if payload.get('fromName'):
-        nome_real = payload['fromName'].strip()
-    elif payload.get('contact', {}).get('name'):
-        nome_real = payload['contact']['name'].strip()
-    elif payload.get('pushName'):
-        nome_real = payload['pushName'].strip()
+    # Prioridade: fromName > contact.name > pushName > notifyName
+    # Busca em múltiplos locais possíveis do payload WAHA
+    campos_nome = [
+        'fromName',           # Nome direto
+        'pushName',           # Nome do push
+        'notifyName',         # Nome de notificação
+        ['contact', 'name'],  # Nome do contato aninhado
+        ['contact', 'pushName'], # Push name do contato
+        ['contact', 'notifyName'], # Notify name do contato
+    ]
+    
+    for campo in campos_nome:
+        if isinstance(campo, list):
+            # Campo aninhado (ex: contact.name)
+            valor = payload
+            for subcampo in campo:
+                valor = valor.get(subcampo, {}) if valor else {}
+            if isinstance(valor, str) and valor.strip():
+                nome_real = valor.strip()
+                break
+        else:
+            # Campo direto
+            if payload.get(campo) and payload[campo].strip():
+                nome_real = payload[campo].strip()
+                break
     
     if nome_real:
+        # Log do nome encontrado para debug
+        logger.info("Nome extraído do payload", 
+                   nome_completo=nome_real,
+                   payload_keys=list(payload.keys()) if payload else [])
+        
         # Usar apenas primeiro nome para personalização
         primeiro_nome = nome_real.split()[0] if nome_real else nome_real
         # Capitalizar primeira letra
         return primeiro_nome.capitalize() if primeiro_nome else None
+    
+    # Log se nenhum nome foi encontrado
+    logger.warning("Nenhum nome encontrado no payload", 
+                  payload_keys=list(payload.keys()) if payload else [],
+                  payload_sample={k: str(v)[:50] for k, v in payload.items() if k in ['fromName', 'pushName', 'notifyName', 'contact']} if payload else {})
     
     return None
 
