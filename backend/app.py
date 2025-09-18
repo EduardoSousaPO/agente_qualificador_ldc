@@ -147,10 +147,24 @@ def health_check():
         }), 500
 
 
-@app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['GET', 'POST'])
 def webhook_whatsapp():
     """Webhook para receber mensagens do WAHA"""
     try:
+        # Teste de conectividade GET
+        if request.method == 'GET':
+            logger.info("=== TESTE WEBHOOK GET ===", 
+                       method=request.method,
+                       url=request.url,
+                       headers=dict(request.headers))
+            return jsonify({
+                'status': 'webhook_online',
+                'message': 'Webhook funcionando - WAHA pode enviar POST aqui',
+                'url': request.url,
+                'timestamp': datetime.utcnow().isoformat()
+            }), 200
+        
+        # Processamento normal POST
         data = request.get_json()
         logger.info("=== WEBHOOK RECEBIDO ===", 
                    data=data, 
