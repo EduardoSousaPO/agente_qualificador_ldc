@@ -329,7 +329,7 @@ class ValidationService:
             Estado.FINALIZADO: Estado.FINALIZADO
         }
         
-        return next_states.get(current_state, Estado.FINALIZADO).value
+        return str(next_states.get(current_state, Estado.FINALIZADO))
     
     def _get_fallback_message(self, estado: Estado, nome_lead: str) -> str:
         """Retorna mensagem de fallback por estado"""

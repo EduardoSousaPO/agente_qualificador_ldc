@@ -28,7 +28,7 @@ class SlotFillingService:
         """Extrai e preenche slots baseado na mensagem do lead"""
         
         mensagem_lower = mensagem.lower().strip()
-        logger.info("Extraindo slots", mensagem=mensagem_lower[:100], estado=estado_atual.value)
+        logger.info("Extraindo slots", mensagem=mensagem_lower[:100], estado=str(estado_atual))
         
         # Criar nova instância do contexto para não mudar o original
         novo_contexto = ContextoConversa(**contexto_atual.model_dump())
@@ -57,7 +57,7 @@ class SlotFillingService:
         # Log das mudanças
         mudancas = self._detectar_mudancas(contexto_atual, novo_contexto)
         if mudancas:
-            logger.info("Slots extraídos", mudancas=mudancas, estado=estado_atual.value)
+            logger.info("Slots extraídos", mudancas=mudancas, estado=str(estado_atual))
         
         return novo_contexto
     
@@ -116,7 +116,7 @@ class SlotFillingService:
                     break
         
         if contexto.patrimonio_range:
-            logger.info("Patrimônio extraído", faixa=contexto.patrimonio_range.value)
+            logger.info("Patrimônio extraído", faixa=str(contexto.patrimonio_range))
         
         return contexto
     
@@ -140,7 +140,7 @@ class SlotFillingService:
                     break
         
         if contexto.objetivo:
-            logger.info("Objetivo extraído", objetivo=contexto.objetivo.value)
+            logger.info("Objetivo extraído", objetivo=str(contexto.objetivo))
         
         return contexto
     
@@ -162,7 +162,7 @@ class SlotFillingService:
                     break
         
         if contexto.urgencia:
-            logger.info("Urgência extraída", urgencia=contexto.urgencia.value)
+            logger.info("Urgência extraída", urgencia=str(contexto.urgencia))
         
         return contexto
     
@@ -184,7 +184,7 @@ class SlotFillingService:
                     break
         
         if contexto.interesse:
-            logger.info("Interesse extraído", interesse=contexto.interesse.value)
+            logger.info("Interesse extraído", interesse=str(contexto.interesse))
         
         return contexto
     
@@ -194,7 +194,7 @@ class SlotFillingService:
         for autoridade_value, patterns in self.autoridade_patterns.items():
             if any(re.search(pattern, mensagem) for pattern in patterns):
                 contexto.autoridade = autoridade_value
-                logger.info("Autoridade extraída", autoridade=autoridade_value.value)
+                logger.info("Autoridade extraída", autoridade=str(autoridade_value))
                 break
         
         return contexto

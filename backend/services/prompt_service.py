@@ -98,7 +98,7 @@ saída:
         
         # Instruções de execução
         execucao = f"""instruções de execução
-- estado_atual: {context.estado_atual.value}
+- estado_atual: {context.estado_atual}
 - slots_preenchidos: {context.get_slots_preenchidos_str()}
 - slots_faltantes: {context.get_slots_faltantes_str()}
 - nome_lead: {context.nome_lead}
@@ -199,7 +199,7 @@ opções: 1) pode enviar 2) prefiro depois.
 se 1, registre interesse baixo e colete e-mail se fizer sentido."""
         }
         
-        return contextos.get(estado, f"estado={estado.value}\nobjetivo: continuar conversa de forma natural.")
+        return contextos.get(estado, f"estado={estado}\nobjetivo: continuar conversa de forma natural.")
     
     def _get_few_shots(self, estado: Estado, nome_lead: str) -> str:
         """Retorna exemplos few-shot para o estado"""
@@ -209,7 +209,7 @@ se 1, registre interesse baixo e colete e-mail se fizer sentido."""
         
         examples = FEW_SHOTS_EXEMPLOS[estado][:2]  # Máximo 2 exemplos
         
-        few_shots = f"exemplos para {estado.value}:\n"
+        few_shots = f"exemplos para {estado}:\n"
         
         for i, example in enumerate(examples, 1):
             few_shots += f"""
@@ -235,7 +235,7 @@ situação: {example.situacao}
         return f"""REFORMULAÇÃO (tentativa {tentativa}):
 {instrucao}
 
-estado: {estado.value}
+estado: {estado}
 máximo 350 caracteres
 use o nome {nome_lead}
 responda somente em json válido"""
