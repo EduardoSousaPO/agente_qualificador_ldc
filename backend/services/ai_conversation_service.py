@@ -360,7 +360,7 @@ class AIConversationService:
     
     def analisar_intencao_lead(self, mensagem: str) -> IntencaoLead:
         """Analisa a intenção por trás da mensagem do lead"""
-        return self.intention_classifier.classificar_intencao(mensagem)
+        return self.intention_classifier.classificar_intencao_rapida(mensagem)
     
     def _finalizar_por_limite_mensagens(self, session_state: SessionState, 
                                        lead_nome: str) -> Dict[str, Any]:
