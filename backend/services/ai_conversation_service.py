@@ -15,6 +15,8 @@ from .reconhecimento_respostas import ReconhecimentoRespostasService
 from .prompt_service import PromptService
 from .validation_service import ValidationService
 from .slot_filling_service import SlotFillingService
+from .guardrails_service import GuardrailsService
+from .intention_classifier import IntentionClassifier
 
 from backend.models.conversation_models import (
     RespostaIA, IntencaoLead, PromptContext, SessionState, Estado, Acao,
@@ -37,12 +39,14 @@ class AIConversationService:
         self.prompt_service = PromptService()
         self.validation_service = ValidationService()
         self.slot_filling_service = SlotFillingService()
+        self.guardrails_service = GuardrailsService()
+        self.intention_classifier = IntentionClassifier()
         self.reconhecimento_service = ReconhecimentoRespostasService()
         
         # Cache de sessões em memória (em produção usar Redis)
         self.session_cache = {}
         self.tentativas_reformulacao = {}  # Controle de reformulações
-    
+        
     def gerar_resposta_humanizada(self, 
                                   lead_nome: str,
                                   lead_canal: str,
@@ -110,7 +114,7 @@ class AIConversationService:
                 'resposta': resposta_ia.mensagem,
                 'acao': resposta_ia.acao.value,
                 'proximo_estado': resposta_ia.proximo_estado.value,
-                'contexto_atualizado': resposta_ia.contexto.dict(),
+                'contexto_atualizado': resposta_ia.contexto.model_dump(),
                 'score_parcial': resposta_ia.score_parcial,
                 'slots_preenchidos': session_state.slots_preenchidos(),
                 'pode_agendar': session_state.pode_agendar()
@@ -182,7 +186,7 @@ class AIConversationService:
                 'resposta': f"Me desculpa, {lead_nome}! Vou te conectar com um consultor humano que vai te explicar melhor. Um momento! 😊",
                 'acao': 'transferir_humano',
                 'proximo_estado': 'finalizado',
-                'contexto_atualizado': session_state.contexto.dict(),
+                'contexto_atualizado': session_state.contexto.model_dump(),
                 'score_parcial': 20,
                 'reformulacao_usada': True,
                 'tentativa': tentativas
@@ -203,7 +207,7 @@ class AIConversationService:
                 'resposta': resposta_reformulada.mensagem,
                 'acao': resposta_reformulada.acao.value,
                 'proximo_estado': resposta_reformulada.proximo_estado.value,
-                'contexto_atualizado': resposta_reformulada.contexto.dict(),
+                'contexto_atualizado': resposta_reformulada.contexto.model_dump(),
                 'score_parcial': resposta_reformulada.score_parcial,
                 'reformulacao_usada': True,
                 'tentativa': tentativas
@@ -309,7 +313,23 @@ class AIConversationService:
             )
             
             if validation_result.valida and validation_result.resposta_corrigida:
-                return validation_result.resposta_corrigida
+                # Aplicar guardrails na resposta validada
+                session_state = SessionState(
+                    lead_id=context.nome_lead,
+                    session_id=f"temp_{int(time.time())}",
+                    estado_atual=context.estado_atual,
+                    contexto=ContextoConversa()
+                )
+                
+                passou, erros, resposta_final = self.guardrails_service.aplicar_guardrails(
+                    validation_result.resposta_corrigida, session_state, context.nome_lead
+                )
+                
+                if passou and resposta_final:
+                    return resposta_final
+                else:
+                    logger.warning("Resposta falhou nos guardrails", errors=erros)
+                    return validation_result.resposta_corrigida  # Retorna original se guardrails falharem
             
             logger.warning("Resposta IA inválida", 
                           errors=validation_result.erros, 
@@ -340,39 +360,7 @@ class AIConversationService:
     
     def analisar_intencao_lead(self, mensagem: str) -> IntencaoLead:
         """Analisa a intenção por trás da mensagem do lead"""
-        try:
-            prompt = self.prompt_service.build_classificador_prompt(mensagem)
-            
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            data = {
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 150,
-                "temperature": 0.2,
-                "response_format": {"type": "json_object"}
-            }
-            
-            response = requests.post(self.api_url, headers=headers, json=data, timeout=10)
-            response.raise_for_status()
-            
-            response_data = response.json()
-            content_json = json.loads(response_data['choices'][0]['message']['content'])
-            
-            return IntencaoLead(**content_json)
-            
-        except Exception as e:
-            logger.error("Erro ao analisar intenção", error=str(e))
-            return IntencaoLead(
-                intencao="duvida",
-                sentimento="neutro", 
-                urgencia=5,
-                qualificacao_score=50,
-                principais_pontos=[]
-            )
+        return self.intention_classifier.classificar_intencao(mensagem)
     
     def _finalizar_por_limite_mensagens(self, session_state: SessionState, 
                                        lead_nome: str) -> Dict[str, Any]:
@@ -384,7 +372,7 @@ class AIConversationService:
                 'resposta': f"Ótimo, {lead_nome}! Com base no que conversamos, posso te conectar com um consultor especialista. Que tal marcarmos 30 minutos? 1) amanhã 10h 2) amanhã 16h",
                 'acao': 'agendar',
                 'proximo_estado': 'agendamento',
-                'contexto_atualizado': session_state.contexto.dict(),
+                'contexto_atualizado': session_state.contexto.model_dump(),
                 'score_parcial': self.slot_filling_service.calcular_score_parcial(session_state.contexto),
                 'limite_atingido': True
             }
@@ -394,7 +382,7 @@ class AIConversationService:
                 'resposta': f"Foi um prazer conversar, {lead_nome}! Vou te mandar um material sobre investimentos independentes. Posso entrar em contato em alguns dias? 1) pode sim 2) prefiro não",
                 'acao': 'finalizar',
                 'proximo_estado': 'educar',
-                'contexto_atualizado': session_state.contexto.dict(),
+                'contexto_atualizado': session_state.contexto.model_dump(),
                 'score_parcial': self.slot_filling_service.calcular_score_parcial(session_state.contexto),
                 'limite_atingido': True
             }
@@ -412,7 +400,7 @@ class AIConversationService:
             'resposta': fallback_resposta.mensagem,
             'acao': fallback_resposta.acao.value,
             'proximo_estado': fallback_resposta.proximo_estado.value,
-            'contexto_atualizado': fallback_resposta.contexto.dict(),
+            'contexto_atualizado': fallback_resposta.contexto.model_dump(),
             'score_parcial': fallback_resposta.score_parcial,
             'fallback_usado': True
         }
