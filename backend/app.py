@@ -276,7 +276,7 @@ def webhook_whatsapp():
         # message: mensagens recebidas (principal)
         # session.status: status da sessão WhatsApp
         # message.edited: mensagens editadas (WAHA 2025.6+)
-        valid_events = ['message', 'session.status', 'message.edited']
+        valid_events = ['message', 'message.any', 'session.status', 'message.edited']
         if event_type not in valid_events:
             logger.info("Evento ignorado", event_type=event_type, valid_events=valid_events)
             return jsonify({'status': 'ignored', 'event_type': event_type}), 200
