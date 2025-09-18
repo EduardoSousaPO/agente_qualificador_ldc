@@ -35,6 +35,10 @@ flake8==6.1.0
 # Logging e monitoramento
 structlog==23.2.0
 
+# Validação de dados
+pydantic==2.5.0
+
+# Servidor web
 gunicorn
 
 
