@@ -227,6 +227,25 @@ def health_check():
         }), 500
 
 
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint para manter o serviço ativo"""
+    try:
+        return jsonify({
+            'status': 'healthy',
+            'service': 'agente_qualificador_ldc',
+            'timestamp': datetime.utcnow().isoformat(),
+            'uptime': True,
+            'database': 'connected'
+        }), 200
+    except Exception as e:
+        logger.error("Health check failed", error=str(e))
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }), 503
+
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook_whatsapp():
     """Webhook para receber mensagens do WAHA"""
