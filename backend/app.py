@@ -48,52 +48,104 @@ def is_duplicate_message(message_id, telefone):
     return False
 
 def extrair_nome_lead(payload):
-    """Extrai nome real do lead do payload WhatsApp com priorização inteligente"""
+    """Extrai nome real do lead do payload WhatsApp WAHA com estrutura real"""
     nome_real = None
     
-    # Prioridade: fromName > contact.name > pushName > notifyName
-    # Busca em múltiplos locais possíveis do payload WAHA
-    campos_nome = [
-        'fromName',           # Nome direto
-        'pushName',           # Nome do push
-        'notifyName',         # Nome de notificação
-        ['contact', 'name'],  # Nome do contato aninhado
-        ['contact', 'pushName'], # Push name do contato
-        ['contact', 'notifyName'], # Notify name do contato
-    ]
+    # Log detalhado do payload para debug
+    logger.info("Tentando extrair nome do payload", 
+               payload_keys=list(payload.keys()) if payload else [],
+               payload_sample={k: str(v)[:100] for k, v in payload.items() if k in ['_data', 'contact', 'vCards']} if payload else {})
     
-    for campo in campos_nome:
-        if isinstance(campo, list):
-            # Campo aninhado (ex: contact.name)
-            valor = payload
-            for subcampo in campo:
-                valor = valor.get(subcampo, {}) if valor else {}
-            if isinstance(valor, str) and valor.strip():
-                nome_real = valor.strip()
-                break
-        else:
-            # Campo direto
-            if payload.get(campo) and payload[campo].strip():
-                nome_real = payload[campo].strip()
+    # Estratégia 1: Buscar em _data (dados estendidos do WAHA)
+    if payload.get('_data'):
+        data_obj = payload['_data']
+        if isinstance(data_obj, dict):
+            # Campos possíveis em _data
+            nome_fields = ['notifyName', 'pushname', 'verifiedName', 'name']
+            for field in nome_fields:
+                if data_obj.get(field) and str(data_obj[field]).strip():
+                    nome_real = str(data_obj[field]).strip()
+                    logger.info("Nome encontrado em _data", field=field, nome=nome_real)
+                    break
+    
+    # Estratégia 2: Buscar em vCards (cartões de contato)
+    if not nome_real and payload.get('vCards'):
+        vcards = payload['vCards']
+        if isinstance(vcards, list) and len(vcards) > 0:
+            vcard = vcards[0]
+            if isinstance(vcard, dict) and vcard.get('displayName'):
+                nome_real = str(vcard['displayName']).strip()
+                logger.info("Nome encontrado em vCard", nome=nome_real)
+    
+    # Estratégia 3: Buscar em contact (estrutura de contato)
+    if not nome_real and payload.get('contact'):
+        contact = payload['contact']
+        if isinstance(contact, dict):
+            nome_fields = ['name', 'pushname', 'notifyName', 'verifiedName']
+            for field in nome_fields:
+                if contact.get(field) and str(contact[field]).strip():
+                    nome_real = str(contact[field]).strip()
+                    logger.info("Nome encontrado em contact", field=field, nome=nome_real)
+                    break
+    
+    # Estratégia 4: Campos diretos (fallback)
+    if not nome_real:
+        nome_fields = ['notifyName', 'pushName', 'fromName', 'name']
+        for field in nome_fields:
+            if payload.get(field) and str(payload[field]).strip():
+                nome_real = str(payload[field]).strip()
+                logger.info("Nome encontrado diretamente", field=field, nome=nome_real)
                 break
     
     if nome_real:
-        # Log do nome encontrado para debug
-        logger.info("Nome extraído do payload", 
-                   nome_completo=nome_real,
-                   payload_keys=list(payload.keys()) if payload else [])
-        
         # Usar apenas primeiro nome para personalização
         primeiro_nome = nome_real.split()[0] if nome_real else nome_real
         # Capitalizar primeira letra
-        return primeiro_nome.capitalize() if primeiro_nome else None
+        nome_final = primeiro_nome.capitalize() if primeiro_nome else None
+        
+        logger.info("Nome processado com sucesso", 
+                   nome_completo=nome_real,
+                   primeiro_nome=nome_final)
+        return nome_final
     
-    # Log se nenhum nome foi encontrado
+    # Log detalhado se nenhum nome foi encontrado
     logger.warning("Nenhum nome encontrado no payload", 
                   payload_keys=list(payload.keys()) if payload else [],
-                  payload_sample={k: str(v)[:50] for k, v in payload.items() if k in ['fromName', 'pushName', 'notifyName', 'contact']} if payload else {})
+                  _data_keys=list(payload.get('_data', {}).keys()) if payload.get('_data') else [],
+                  contact_keys=list(payload.get('contact', {}).keys()) if payload.get('contact') else [],
+                  vcards_count=len(payload.get('vCards', [])) if payload.get('vCards') else 0)
     
     return None
+
+def limpar_telefone_waha(telefone_raw):
+    """Limpa telefone do formato WAHA (ex: 555124150039@c.us) para apenas números"""
+    if not telefone_raw:
+        logger.error("Telefone raw vazio", telefone_raw=repr(telefone_raw))
+        return None
+    
+    try:
+        # Remove @c.us e outros sufixos WhatsApp
+        telefone_limpo = str(telefone_raw).split('@')[0]
+        
+        # Remove caracteres não numéricos
+        telefone_numerico = ''.join(filter(str.isdigit, telefone_limpo))
+        
+        if not telefone_numerico:
+            logger.error("Telefone sem números após limpeza", 
+                        telefone_raw=telefone_raw,
+                        telefone_limpo=telefone_limpo)
+            return None
+            
+        logger.info("Telefone limpo com sucesso", 
+                   telefone_raw=telefone_raw,
+                   telefone_limpo=telefone_numerico)
+        
+        return telefone_numerico
+    except Exception as e:
+        logger.error("Erro ao limpar telefone", 
+                    telefone_raw=repr(telefone_raw),
+                    error=str(e))
+        return None
 
 # Configuração de logging estruturado
 structlog.configure(
@@ -249,6 +301,21 @@ def webhook_whatsapp():
                    from_exists='from' in payload if payload else False,
                    body_exists='body' in payload if payload else False)
         
+        # Log COMPLETO do payload para debug (apenas primeiros 200 chars de cada campo)
+        if payload:
+            payload_debug = {}
+            for k, v in payload.items():
+                if isinstance(v, (str, int, bool)):
+                    payload_debug[k] = str(v)[:200] if len(str(v)) > 200 else v
+                elif isinstance(v, dict):
+                    payload_debug[k] = f"dict_com_{len(v)}_campos: {list(v.keys())[:5]}"
+                elif isinstance(v, list):
+                    payload_debug[k] = f"list_com_{len(v)}_items"
+                else:
+                    payload_debug[k] = str(type(v))
+            
+            logger.info("🔍 PAYLOAD COMPLETO DEBUG", payload_debug=payload_debug)
+        
         if not payload:
             logger.warning("Payload vazio", data=data)
             return jsonify({'status': 'empty_payload'}), 400
@@ -266,8 +333,16 @@ def webhook_whatsapp():
             logger.info("Mensagem própria ignorada")
             return jsonify({'status': 'own_message'}), 200
         
-        telefone = payload['from']
+        telefone_raw = payload['from']
         mensagem = payload['body']
+        
+        # Limpar telefone do formato WAHA (ex: 555124150039@c.us)
+        telefone = limpar_telefone_waha(telefone_raw)
+        if not telefone:
+            logger.error("Falha ao extrair telefone válido", 
+                        telefone_raw=repr(telefone_raw),
+                        payload_keys=list(payload.keys()))
+            return jsonify({'status': 'invalid_phone'}), 400
         
         # Verificar deduplicação de mensagens
         message_id = payload.get('id', f"{telefone}_{int(time.time())}")
