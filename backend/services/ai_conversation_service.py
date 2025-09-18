@@ -7,6 +7,7 @@ import os
 import json
 import requests
 import time
+import re
 from typing import Dict, Any, List, Optional, Tuple
 import structlog
 from pydantic import ValidationError
@@ -46,6 +47,43 @@ class AIConversationService:
         # Cache de sessões em memória (em produção usar Redis)
         self.session_cache = {}
         self.tentativas_reformulacao = {}  # Controle de reformulações
+    
+    def _coerce_to_text(self, raw: str) -> str:
+        """Coerção robusta de dados para texto limpo (HOTFIX GRACIOSO)"""
+        if not raw:
+            return ""
+        
+        # Remove code fences e markdown
+        raw = re.sub(r"^```(?:json|md)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE)
+        
+        # Tenta extrair JSON se houver
+        try:
+            obj = json.loads(raw)
+            if isinstance(obj, dict):
+                # Procura por campos comuns de resposta
+                for field in ['text', 'mensagem', 'resposta', 'content', 'message']:
+                    if field in obj and isinstance(obj[field], str):
+                        return obj[field].strip()
+        except Exception:
+            pass
+        
+        # Se ainda não for JSON, devolve texto cru truncado
+        return raw.strip()[:900]
+    
+    def _get_fallback_by_state(self, estado: Estado, nome_lead: str) -> str:
+        """Fallback inteligente por estado (evita loops de desculpa)"""
+        fallbacks = {
+            Estado.INICIO: f"Oi {nome_lead}! Sou da LDC Capital. Posso te fazer 2 perguntas rápidas sobre investimentos? 1) Sim 2) Agora não",
+            Estado.SITUACAO: f"{nome_lead}, você já investe hoje ou está começando? 1) Já invisto 2) Começando",
+            Estado.PATRIMONIO: f"Perfeito {nome_lead}! Qual sua faixa de patrimônio? 1) Até 100k 2) 100k-500k 3) 500k+",
+            Estado.OBJETIVO: f"Legal {nome_lead}! Qual seu principal objetivo? 1) Crescimento 2) Renda 3) Aposentadoria",
+            Estado.URGENCIA: f"Entendi {nome_lead}. Quando pretende começar/aumentar? 1) Imediatamente 2) Em alguns meses",
+            Estado.INTERESSE: f"Show {nome_lead}! Te interessaria um diagnóstico gratuito? 1) Sim, quero 2) Talvez depois",
+            Estado.AGENDAMENTO: f"Ótimo {nome_lead}! Quando você tem 15min livres? 1) Hoje 16h 2) Amanhã 10h",
+            Estado.EDUCAR: f"Sem problemas {nome_lead}! Posso te enviar material sobre investimentos? 1) Sim 2) Não",
+            Estado.FINALIZADO: f"Obrigado {nome_lead}! Qualquer dúvida, estou aqui! 😊"
+        }
+        return fallbacks.get(estado, f"Vamos seguir {nome_lead}? Me diga como posso ajudar!")
         
     def gerar_resposta_humanizada(self, 
                                   lead_nome: str,
@@ -307,6 +345,13 @@ class AIConversationService:
             response_data = response.json()
             content = response_data['choices'][0]['message']['content']
             
+            # 🔧 HOTFIX: Log detalhado do payload bruto da IA
+            logger.info("🤖 IA RAW RESPONSE", 
+                       raw_content=content[:1000], 
+                       content_length=len(content),
+                       estado=str(context.estado_atual),
+                       lead=context.nome_lead)
+            
             # Validar resposta
             validation_result = self.validation_service.validar_resposta_ia(
                 content, context.estado_atual, context.nome_lead
@@ -329,13 +374,63 @@ class AIConversationService:
                     # Se passou nos guardrails, usar resposta corrigida se existe, senão a original
                     return resposta_corrigida if resposta_corrigida else validation_result.resposta_corrigida
                 else:
-                    logger.warning("Resposta falhou nos guardrails", errors=erros)
-                    return validation_result.resposta_corrigida  # Retorna original se guardrails falharem
+                    # 🔧 HOTFIX: Fallback gracioso - não quebrar a conversa
+                    logger.warning("Resposta falhou nos guardrails - aplicando fallback gracioso", 
+                                 errors=erros,
+                                 raw_content=content[:500],
+                                 estado=str(context.estado_atual))
+                    
+                    # Tentar coerção de dados primeiro
+                    texto_coercao = self._coerce_to_text(content)
+                    if texto_coercao and len(texto_coercao) > 10:
+                        # Criar resposta com texto coagido
+                        from backend.models.conversation_models import RespostaIA, Acao
+                        return RespostaIA(
+                            mensagem=texto_coercao,
+                            acao=Acao.CONTINUAR,
+                            proximo_estado=context.estado_atual,
+                            contexto=ContextoConversa(),
+                            score_parcial=50  # Score médio para fallback
+                        )
+                    
+                    # Se coerção falhar, usar fallback por estado
+                    texto_fallback = self._get_fallback_by_state(context.estado_atual, context.nome_lead)
+                    return RespostaIA(
+                        mensagem=texto_fallback,
+                        acao=Acao.CONTINUAR,
+                        proximo_estado=context.estado_atual,
+                        contexto=ContextoConversa(),
+                        score_parcial=40  # Score baixo para fallback
+                    )
             
-            logger.warning("Resposta IA inválida", 
+            # 🔧 HOTFIX: Se validação falhar, também aplicar fallback gracioso
+            logger.warning("Validação IA falhou - aplicando fallback gracioso", 
                           errors=validation_result.erros, 
-                          content=content[:200])
-            return None
+                          raw_content=content[:500],
+                          estado=str(context.estado_atual))
+            
+            # Tentar coerção como último recurso
+            texto_coercao = self._coerce_to_text(content)
+            if texto_coercao and len(texto_coercao) > 10:
+                from backend.models.conversation_models import RespostaIA, Acao
+                return RespostaIA(
+                    mensagem=texto_coercao,
+                    acao=Acao.CONTINUAR,
+                    proximo_estado=context.estado_atual,
+                    contexto=ContextoConversa(),
+                    score_parcial=30
+                )
+            
+            # Fallback final por estado
+            texto_fallback = self._get_fallback_by_state(context.estado_atual, context.nome_lead)
+            from backend.models.conversation_models import RespostaIA, Acao
+            return RespostaIA(
+                mensagem=texto_fallback,
+                acao=Acao.CONTINUAR,
+                proximo_estado=context.estado_atual,
+                contexto=ContextoConversa(),
+                score_parcial=20
+            )
             
         except requests.exceptions.Timeout:
             logger.error("Timeout na chamada OpenAI")

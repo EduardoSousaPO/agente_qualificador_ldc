@@ -10,6 +10,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import logging
 import structlog
+from cachetools import TTLCache
 
 # Imports dos serviços
 from backend.models.database_models import (
@@ -23,9 +24,8 @@ from backend.services.lead_detector import LeadDetectorService
 from backend.services.google_sheets_service import GoogleSheetsService
 import time
 
-# Cache para deduplicação de mensagens (em memória)
-message_cache = {}
-CACHE_EXPIRY_SECONDS = 300  # 5 minutos
+# 🔧 HOTFIX: Cache TTL robusto para deduplicação de mensagens WAHA
+DEDUP_CACHE = TTLCache(maxsize=10000, ttl=60)  # 10k mensagens, TTL 60s
 
 def cleanup_message_cache():
     """Remove mensagens expiradas do cache"""
@@ -36,15 +36,16 @@ def cleanup_message_cache():
         del message_cache[key]
 
 def is_duplicate_message(message_id, telefone):
-    """Verifica se a mensagem já foi processada"""
-    cleanup_message_cache()
+    """🔧 HOTFIX: Verifica deduplicação robusta com cache TTL"""
+    # Criar chave única para telefone + message_id
     cache_key = f"{telefone}:{message_id}"
     
-    if cache_key in message_cache:
+    # Verificar se já foi processada
+    if cache_key in DEDUP_CACHE:
         return True
     
-    # Marcar mensagem como processada
-    message_cache[cache_key] = time.time()
+    # Marcar como processada (TTL automático)
+    DEDUP_CACHE[cache_key] = True
     return False
 
 def extrair_nome_lead(payload):
@@ -449,8 +450,12 @@ def webhook_whatsapp():
         return jsonify({'status': 'processed', 'result': resultado}), 200
         
     except Exception as e:
-        logger.error("Erro no webhook", error=str(e))
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        # 🔧 HOTFIX: Sempre retorna 200 para evitar retry storms do WAHA
+        logger.exception("Erro no webhook - retornando 200 para evitar retries", 
+                        error=str(e),
+                        telefone=payload.get('from', 'UNKNOWN')[:20],
+                        mensagem=payload.get('body', '')[:100])
+        return jsonify({'status': 'error_handled', 'message': 'Erro processado internamente'}), 200
 
 
 @app.route('/leads', methods=['GET'])

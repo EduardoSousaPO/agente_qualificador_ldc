@@ -25,6 +25,7 @@ schedule==1.2.0
 pytz==2023.3
 python-dateutil==2.8.2
 phonenumbers==8.13.26
+cachetools==5.3.2
 
 # Desenvolvimento e testes
 pytest==7.4.3
