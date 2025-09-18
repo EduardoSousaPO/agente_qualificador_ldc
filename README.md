@@ -91,7 +91,7 @@ python backend/app.py
 
 ```bash
 # Executar teste completo do sistema
-python tests/TESTE_SISTEMA_COMPLETO.py
+python tests/test_sistema_completo.py
 
 # Testar endpoints
 curl http://localhost:5000/health
