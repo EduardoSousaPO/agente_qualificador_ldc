@@ -28,12 +28,9 @@ import time
 DEDUP_CACHE = TTLCache(maxsize=10000, ttl=60)  # 10k mensagens, TTL 60s
 
 def cleanup_message_cache():
-    """Remove mensagens expiradas do cache"""
-    current_time = time.time()
-    expired_keys = [key for key, timestamp in message_cache.items() 
-                   if current_time - timestamp > CACHE_EXPIRY_SECONDS]
-    for key in expired_keys:
-        del message_cache[key]
+    """Cache TTL automático - função mantida por compatibilidade"""
+    # Cache TTL gerencia automaticamente a expiração
+    pass
 
 def is_duplicate_message(message_id, telefone):
     """🔧 HOTFIX: Verifica deduplicação robusta com cache TTL"""
