@@ -316,6 +316,15 @@ def webhook_whatsapp():
             
             logger.info("🔍 PAYLOAD COMPLETO DEBUG", payload_debug=payload_debug)
         
+        # Log EXTRA para debug do problema do telefone
+        logger.info("🚨 DEBUG TELEFONE", 
+                   raw_data_keys=list(data.keys()),
+                   payload_keys=list(payload.keys()) if payload else [],
+                   from_in_data='from' in data,
+                   from_value_in_data=data.get('from', 'AUSENTE'),
+                   from_in_payload='from' in payload if payload else False,
+                   from_value_in_payload=payload.get('from', 'AUSENTE') if payload else 'PAYLOAD_VAZIO')
+        
         if not payload:
             logger.warning("Payload vazio", data=data)
             return jsonify({'status': 'empty_payload'}), 400
