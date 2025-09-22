@@ -796,6 +796,48 @@ def enviar_resultado_crm():
         }), 500
 
 
+
+@app.route('/mensagens-simuladas', methods=['GET'])
+def listar_mensagens_simuladas():
+    """Lista mensagens que foram simuladas (não enviadas via WAHA)"""
+    try:
+        # Buscar mensagens recentes
+        limit = request.args.get('limit', 10, type=int)
+        
+        # Buscar leads recentes para mostrar as conversas
+        leads = lead_repo.get_recent_leads(limit)
+        
+        mensagens_simuladas = []
+        
+        for lead in leads:
+            # Buscar mensagens da sessão mais recente
+            sessoes = session_repo.get_sessions_by_lead_id(lead['id'])
+            if sessoes:
+                sessao_recente = sessoes[0]
+                mensagens = message_repo.get_session_messages(sessao_recente['id'])
+                
+                for msg in mensagens:
+                    if msg.get('tipo') == 'enviada':
+                        mensagens_simuladas.append({
+                            'lead_nome': lead.get('nome', 'N/A'),
+                            'telefone': lead.get('telefone', 'N/A'),
+                            'mensagem': msg.get('conteudo', ''),
+                            'timestamp': msg.get('created_at', ''),
+                            'simulada': True  # Todas as mensagens estão sendo simuladas
+                        })
+        
+        return jsonify({
+            'mensagens': mensagens_simuladas,
+            'total': len(mensagens_simuladas),
+            'info': 'Mensagens que seriam enviadas via WhatsApp (simuladas devido a problema com WAHA)',
+            'solucao': 'Configure WAHA corretamente para envio real'
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao listar mensagens simuladas", error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+
 # Handlers não utilizados removidos para WAHA Core otimizado
 # Mantidos apenas: handle_session_status() e handle_message_edited()
 
