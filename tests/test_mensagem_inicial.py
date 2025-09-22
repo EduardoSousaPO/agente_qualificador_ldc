@@ -118,3 +118,6 @@ if __name__ == "__main__":
     else:
         print("\n❌ RESULTADO: Mensagem inicial precisa de ajustes")
         exit(1)
+
+
+

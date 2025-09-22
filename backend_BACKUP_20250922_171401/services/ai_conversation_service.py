@@ -13,7 +13,7 @@ import structlog
 from pydantic import ValidationError
 
 from .reconhecimento_respostas import ReconhecimentoRespostasService
-from .prompt_service_pro import PromptServicePro
+from .prompt_service import PromptService
 from .validation_service import ValidationService
 from .slot_filling_service import SlotFillingService
 from .guardrails_service import GuardrailsService
@@ -37,7 +37,7 @@ class AIConversationService:
         self.api_url = "https://api.openai.com/v1/chat/completions"
         
         # Novos serviços especializados
-        self.prompt_service_pro = PromptServicePro()  # 🆕 NOVO SISTEMA PROFISSIONAL
+        self.prompt_service = PromptService()
         self.validation_service = ValidationService()
         self.slot_filling_service = SlotFillingService()
         self.guardrails_service = GuardrailsService()
@@ -379,9 +379,9 @@ class AIConversationService:
         """Chama OpenAI com novo sistema estruturado"""
         
         try:
-            # 🆕 USAR NOVO SISTEMA PROFISSIONAL
-            system_prompt = self.prompt_service_pro.system_prompt
-            user_prompt = self.prompt_service_pro.build_contextualized_prompt(context)
+            # Construir prompts
+            system_prompt = self.prompt_service.system_prompt
+            user_prompt = self.prompt_service.build_user_prompt(context)
             
             # Preparar chamada com responses API
             headers = {
@@ -401,18 +401,8 @@ class AIConversationService:
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {
-                        "name": "resposta_agente", 
-                        "schema": {
-                            "type": "object",
-                            "required": ["mensagem", "acao", "proximo_estado", "contexto", "score_parcial"],
-                            "properties": {
-                                "mensagem": {"type": "string", "maxLength": 400},
-                                "acao": {"type": "string", "enum": ["continuar", "agendar", "finalizar", "transferir_humano"]},
-                                "proximo_estado": {"type": "string", "enum": ["inicio", "situacao", "patrimonio", "objetivo", "urgencia", "interesse", "agendamento", "educar", "finalizado"]},
-                                "contexto": {"type": "object"},
-                                "score_parcial": {"type": "integer", "minimum": 0, "maximum": 100}
-                            }
-                        }
+                        "name": "resposta_agente",
+                        "schema": self.prompt_service.json_schema
                     }
                 },
                 "stop": ["\n\n", "Mensagem:", "Lead:", "Agente:"]

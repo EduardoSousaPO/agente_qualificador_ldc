@@ -226,3 +226,6 @@ if __name__ == "__main__":
     # Exit code baseado nos resultados
     exit_code = 0 if sucessos == total else 1
     exit(exit_code)
+
+
+

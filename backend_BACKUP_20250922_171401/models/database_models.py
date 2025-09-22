@@ -427,21 +427,5 @@ class SystemLogRepository:
             return True
         except Exception:
             return False
-    
-    def get_recent_logs(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Busca logs recentes"""
-        try:
-            result = self.db.table('system_logs').select('*').order('created_at', desc=True).limit(limit).execute()
-            return result.data or []
-        except Exception:
-            return []
-    
-    def get_error_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Busca logs de erro"""
-        try:
-            result = self.db.table('system_logs').select('*').eq('nivel', 'ERROR').order('created_at', desc=True).limit(limit).execute()
-            return result.data or []
-        except Exception:
-            return []
 
 
