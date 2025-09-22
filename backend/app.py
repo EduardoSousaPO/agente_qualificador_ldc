@@ -797,6 +797,47 @@ def enviar_resultado_crm():
 
 
 
+@app.route('/numeros-autorizados', methods=['GET'])
+def listar_numeros_autorizados():
+    """Lista números autorizados a receber mensagens"""
+    try:
+        numeros = whatsapp_service.phone_validator.get_numeros_autorizados()
+        
+        return jsonify({
+            'numeros_autorizados': numeros,
+            'total': len(numeros),
+            'info': 'Apenas estes números podem receber mensagens do sistema',
+            'protecao_ativa': True
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao listar números autorizados", error=str(e))
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/adicionar-numero-autorizado', methods=['POST'])
+def adicionar_numero_autorizado():
+    """Adiciona número à lista de autorizados"""
+    try:
+        data = request.get_json()
+        telefone = data.get('telefone')
+        motivo = data.get('motivo', 'Adicionado via API')
+        
+        if not telefone:
+            return jsonify({'error': 'Telefone é obrigatório'}), 400
+        
+        whatsapp_service.phone_validator.adicionar_numero_autorizado(telefone, motivo)
+        
+        return jsonify({
+            'success': True,
+            'telefone': telefone,
+            'motivo': motivo,
+            'message': 'Número adicionado com sucesso'
+        }), 200
+        
+    except Exception as e:
+        logger.error("Erro ao adicionar número autorizado", error=str(e))
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/mensagens-simuladas', methods=['GET'])
 def listar_mensagens_simuladas():
     """Lista mensagens que foram simuladas (não enviadas via WAHA)"""

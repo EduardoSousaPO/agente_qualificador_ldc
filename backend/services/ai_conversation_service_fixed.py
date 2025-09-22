@@ -88,7 +88,7 @@ class AIConversationServiceFixed:
             # Fallback de emergência
             return {
                 'success': True,
-                'resposta': f"Oi {lead_nome}! Sou Rafael da LDC Capital. Como posso te ajudar com investimentos? 1) quero saber mais 2) depois",
+                'resposta': f"Oi {lead_nome}! Sou agente comercial da LDC Capital. Como posso te ajudar com investimentos? 1) quero saber mais 2) depois",
                 'acao': 'continuar',
                 'proximo_estado': 'inicio',
                 'contexto_atualizado': {},
@@ -142,7 +142,7 @@ class AIConversationServiceFixed:
         """Fallback profissional por estado"""
         
         fallbacks = {
-            'inicio': f"Oi {nome}! Sou Rafael, consultor da LDC Capital. Você tem interesse em investimentos? 1) sim, tenho interesse 2) não agora",
+            'inicio': f"Oi {nome}! Sou agente comercial da LDC Capital. Você tem interesse em investimentos? 1) sim, tenho interesse 2) não agora",
             
             'situacao': f"Legal, {nome}! Para te orientar melhor: você já investe hoje ou está começando? 1) já invisto 2) estou começando",
             

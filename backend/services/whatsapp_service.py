@@ -7,6 +7,7 @@ import requests
 import time
 from typing import Dict, Any, Optional
 import structlog
+from .phone_validator import PhoneValidator
 
 logger = structlog.get_logger()
 
@@ -20,6 +21,9 @@ class WhatsAppService:
         self.webhook_url = os.getenv('WAHA_WEBHOOK_URL')
         self.api_key = os.getenv('WAHA_API_KEY')
         self.max_tentativas = int(os.getenv('MAX_TENTATIVAS_ENVIO', '3'))
+        
+        # 🛡️ PROTEÇÃO: Validador de telefones
+        self.phone_validator = PhoneValidator()
         
         # Mensagens personalizadas por canal
         self.mensagens_iniciais = {
@@ -134,7 +138,20 @@ Qual sua preferência? 🎯
         }
     
     def enviar_mensagem(self, telefone: str, mensagem: str, tentativa: int = 1) -> Dict[str, Any]:
-        """Envia mensagem via WAHA"""
+        """Envia mensagem via WAHA com proteção contra números não autorizados"""
+        
+        # 🛡️ PROTEÇÃO CRÍTICA: Verificar se número está autorizado
+        if not self.phone_validator.validar_e_log_tentativa(telefone, "envio_mensagem"):
+            logger.error("🚨 ENVIO BLOQUEADO - Número não autorizado", 
+                        telefone=telefone, 
+                        mensagem_preview=mensagem[:50])
+            return {
+                'success': False,
+                'error': 'Número não autorizado para receber mensagens',
+                'telefone': telefone,
+                'bloqueado': True
+            }
+        
         try:
             # Delay para evitar bloqueio do número (3-8 segundos aleatório)
             import random
