@@ -379,9 +379,15 @@ class AIConversationService:
         """Chama OpenAI com novo sistema estruturado"""
         
         try:
-            # 🆕 USAR NOVO SISTEMA PROFISSIONAL
+            # 🆕 USAR NOVO SISTEMA PROFISSIONAL - FORÇA SEMPRE
             system_prompt = self.prompt_service_pro.system_prompt
             user_prompt = self.prompt_service_pro.build_contextualized_prompt(context)
+            
+            # LOG DEBUG
+            logger.info("🆕 Usando sistema profissional", 
+                       estado=context.estado_atual,
+                       nome=context.nome_lead,
+                       prompt_length=len(user_prompt))
             
             # Preparar chamada com responses API
             headers = {
@@ -520,9 +526,43 @@ class AIConversationService:
             
         except requests.exceptions.Timeout:
             logger.error("Timeout na chamada OpenAI")
-            return None
+
+    def _get_emergency_fallback(self, context: PromptContext) -> str:
+        """Fallback emergencial com novo sistema"""
+        nome = context.nome_lead
+        estado = context.estado_atual
+        
+        if estado == "inicio":
+            return f"Oi {nome}! Sou Rafael, consultor da LDC Capital. Você tem interesse em investimentos? 1) sim 2) não"
+        elif estado == "situacao":  
+            return f"Legal, {nome}! Você já investe hoje ou está começando? 1) já invisto 2) começando"
+        elif estado == "patrimonio":
+            return f"Entendi, {nome}. Você está mais na fase de acumular ainda ou já tem uma reserva boa? 1) acumulando 2) tenho reserva"
+        elif estado == "objetivo":
+            return f"Perfeito, {nome}! O que te atrai mais: 1) crescer patrimônio 2) gerar renda extra 3) aposentadoria"
+        else:
+            return f"Entendi, {nome}! Que tal marcarmos um diagnóstico gratuito de 30 min? 1) sim 2) depois"
+            
         except Exception as e:
             logger.error("Erro na chamada OpenAI", error=str(e))
+            return None
+
+    def _get_emergency_fallback(self, context: PromptContext) -> str:
+        """Fallback emergencial com novo sistema"""
+        nome = context.nome_lead
+        estado = context.estado_atual
+        
+        if estado == "inicio":
+            return f"Oi {nome}! Sou Rafael, consultor da LDC Capital. Você tem interesse em investimentos? 1) sim 2) não"
+        elif estado == "situacao":  
+            return f"Legal, {nome}! Você já investe hoje ou está começando? 1) já invisto 2) começando"
+        elif estado == "patrimonio":
+            return f"Entendi, {nome}. Você está mais na fase de acumular ainda ou já tem uma reserva boa? 1) acumulando 2) tenho reserva"
+        elif estado == "objetivo":
+            return f"Perfeito, {nome}! O que te atrai mais: 1) crescer patrimônio 2) gerar renda extra 3) aposentadoria"
+        else:
+            return f"Entendi, {nome}! Que tal marcarmos um diagnóstico gratuito de 30 min? 1) sim 2) depois"
+
             return None
     
     def _chamar_openai(self, prompt: str, estado: Estado, nome_lead: str) -> Optional[RespostaIA]:

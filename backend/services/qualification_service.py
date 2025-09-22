@@ -10,7 +10,7 @@ import structlog
 from backend.models.database_models import Session, Message, Qualificacao, SystemLog
 from backend.services.scoring_service import ScoringService
 from backend.services.whatsapp_service import WhatsAppService
-from backend.services.ai_conversation_service import AIConversationService
+from backend.services.ai_conversation_service_fixed import AIConversationServiceFixed as AIConversationService
 
 logger = structlog.get_logger()
 
