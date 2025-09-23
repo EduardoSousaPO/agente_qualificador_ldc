@@ -281,7 +281,7 @@ class GoogleSheetsService:
                 body={'values': [crm_row]}
             ).execute()
             
-            logger.info("Resultado enviado para CRM", lead_nome=lead_data.get('nome'))
+            logger.info("Resultado enviado para CRM", nome_lead=lead_data.get('nome'))
             return {'success': True, 'message': 'Enviado para CRM com sucesso'}
             
         except Exception as e:

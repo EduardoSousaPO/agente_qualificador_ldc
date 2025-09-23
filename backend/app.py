@@ -389,7 +389,7 @@ def webhook_whatsapp():
                    lead_encontrado=bool(lead_data),
                    lead_id=lead_data.get('id') if lead_data else None,
                    lead_telefone=lead_data.get('telefone') if lead_data else None,
-                   lead_nome=lead_data.get('nome') if lead_data else None)
+                   nome_lead=lead_data.get('nome') if lead_data else None)
         
         if not lead_data:
             # Lead não encontrado - criar automaticamente
@@ -860,7 +860,7 @@ def listar_mensagens_simuladas():
                 for msg in mensagens:
                     if msg.get('tipo') == 'enviada':
                         mensagens_simuladas.append({
-                            'lead_nome': lead.get('nome', 'N/A'),
+                            'nome_lead': lead.get('nome', 'N/A'),
                             'telefone': lead.get('telefone', 'N/A'),
                             'mensagem': msg.get('conteudo', ''),
                             'timestamp': msg.get('created_at', ''),

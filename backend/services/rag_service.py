@@ -70,3 +70,4 @@ class RAGService:
         except Exception as e:
             log.error("Erro ao consultar a base de conhecimento RAG", error=str(e), query=query)
             return ""
+

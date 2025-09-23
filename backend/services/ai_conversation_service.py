@@ -104,20 +104,20 @@ class AIConversationService:
             
         return False
     
-    def _gerar_resposta_transicao(self, session_state, lead_nome: str) -> Dict[str, Any]:
+    def _gerar_resposta_transicao(self, session_state, nome_lead: str) -> Dict[str, Any]:
         """NOVO: Gera resposta de transição para quebrar loops de erro"""
         
         # Respostas específicas por estado que mudam o foco da conversa
         transicoes = {
-            Estado.PATRIMONIO: f"Sem problemas, {lead_nome}! Vamos simplificar: você tem mais ou menos de 100 mil reais para investir? 1) Mais 2) Menos",
-            Estado.OBJETIVO: f"Tranquilo, {lead_nome}! É simples: você quer que o dinheiro CRESÇA (tipo dobrar) ou que te PAGUE todo mês? 1) Crescer 2) Pagar mensalmente",
-            Estado.URGENCIA: f"Ok {lead_nome}! Vou perguntar diferente: você quer começar a investir esta semana ou pode esperar uns meses? 1) Esta semana 2) Posso esperar",
-            Estado.INTERESSE: f"Perfeito, {lead_nome}! Que tal conversarmos com um especialista que pode te ajudar melhor? 1) Sim, quero conversar 2) Não agora"
+            Estado.PATRIMONIO: f"Sem problemas, {nome_lead}! Vamos simplificar: você tem mais ou menos de 100 mil reais para investir? 1) Mais 2) Menos",
+            Estado.OBJETIVO: f"Tranquilo, {nome_lead}! É simples: você quer que o dinheiro CRESÇA (tipo dobrar) ou que te PAGUE todo mês? 1) Crescer 2) Pagar mensalmente",
+            Estado.URGENCIA: f"Ok {nome_lead}! Vou perguntar diferente: você quer começar a investir esta semana ou pode esperar uns meses? 1) Esta semana 2) Posso esperar",
+            Estado.INTERESSE: f"Perfeito, {nome_lead}! Que tal conversarmos com um especialista que pode te ajudar melhor? 1) Sim, quero conversar 2) Não agora"
         }
         
         resposta_transicao = transicoes.get(
             session_state.estado_atual, 
-            f"Vamos recomeçar, {lead_nome}! Me conta: você tem interesse em investimentos? 1) Sim 2) Não"
+            f"Vamos recomeçar, {nome_lead}! Me conta: você tem interesse em investimentos? 1) Sim 2) Não"
         )
         
         # Reset do contador de erros
@@ -150,7 +150,7 @@ class AIConversationService:
         
     def gerar_resposta_humanizada(
         self,
-        lead_nome: str,
+        nome_lead: str,
         lead_canal: str,
         mensagem_lead: str,
         historico_conversa: List[Dict[str, str]],
@@ -166,16 +166,16 @@ class AIConversationService:
 
             # Obter ou criar estado da sessão
             session_state = self._get_or_create_session_state(
-                session_id, lead_nome, estado_enum, historico_conversa
+                session_id, nome_lead, estado_enum, historico_conversa
             )
 
             # Verificar limites de mensagens
             if session_state.mensagem_count >= MAX_MENSAGENS_POR_CONVERSA:
-                return self._finalizar_por_limite_mensagens(session_state, lead_nome)
+                return self._finalizar_por_limite_mensagens(session_state, nome_lead)
 
             # NOVO: Detectar se lead não compreendeu
             if self._detectar_nao_compreensao(mensagem_lead):
-                return self._processar_reformulacao(session_state, mensagem_lead, lead_nome)
+                return self._processar_reformulacao(session_state, mensagem_lead, nome_lead)
 
             # NOVO: Verificar se a resposta gerada anteriormente causou loop
             # (isso previne que o sistema fique gerando mensagens de erro repetidas)
@@ -188,7 +188,7 @@ class AIConversationService:
 
                 if ultima_resposta_agente and self._detectar_loop_erro(session_id, ultima_resposta_agente):
                     logger.info("Loop detectado, enviando mensagem de transição", session_id=session_id)
-                    return self._gerar_resposta_transicao(session_state, lead_nome)
+                    return self._gerar_resposta_transicao(session_state, nome_lead)
 
             # Extrair slots da mensagem do lead
             session_state.contexto = self.slot_filling_service.extrair_slots_da_mensagem(
@@ -205,11 +205,11 @@ class AIConversationService:
 
             # Gerar resposta usando IA
             resposta_ia = self._gerar_resposta_ia(
-                session_state, mensagem_lead, lead_canal, proxima_acao, proximo_estado, lead_nome
+                session_state, mensagem_lead, lead_canal, proxima_acao, proximo_estado, nome_lead
             )
 
             if not resposta_ia:
-                return self._gerar_fallback_response(session_state, lead_nome)
+                return self._gerar_fallback_response(session_state, nome_lead)
 
             # Atualizar estado da sessão
             session_state.estado_atual = resposta_ia.proximo_estado
@@ -221,7 +221,7 @@ class AIConversationService:
 
             logger.info(
                 "Resposta gerada com sucesso",
-                lead_nome=lead_nome,
+                nome_lead=nome_lead,
                 estado=resposta_ia.proximo_estado,
                 acao=resposta_ia.acao,
                 score=resposta_ia.score_parcial
@@ -239,9 +239,9 @@ class AIConversationService:
             }
 
         except Exception as e:
-            logger.error("Erro ao gerar resposta IA", error=str(e), lead_nome=lead_nome)
-            return self._gerar_erro_response(estado_atual, lead_nome, str(e))
-    def _get_or_create_session_state(self, session_id: str, lead_nome: str, 
+            logger.error("Erro ao gerar resposta IA", error=str(e), nome_lead=nome_lead)
+            return self._gerar_erro_response(estado_atual, nome_lead, str(e))
+    def _get_or_create_session_state(self, session_id: str, nome_lead: str, 
                                    estado_atual: Estado, historico: List[Dict[str, str]]) -> SessionState:
         """Obtém ou cria estado da sessão"""
         
@@ -283,7 +283,7 @@ class AIConversationService:
         return any(frase in mensagem_lower for frase in frases_nao_compreensao)
     
     def _processar_reformulacao(self, session_state: SessionState, mensagem: str, 
-                               lead_nome: str) -> Dict[str, Any]:
+                               nome_lead: str) -> Dict[str, Any]:
         """Processa reformulação quando lead não entende"""
         
         # Incrementar tentativas de reformulação
@@ -294,13 +294,13 @@ class AIConversationService:
         logger.info("Processando reformulação", 
                    estado=session_state.estado_atual,
                    tentativa=tentativas,
-                   lead_nome=lead_nome)
+                   nome_lead=nome_lead)
         
         # Após 2 tentativas, transferir para humano
         if tentativas > MAX_REFORMULACOES_POR_ESTADO:
             return {
                 'success': True,
-                'resposta': f"Me desculpa, {lead_nome}! Vou te conectar com um consultor humano que vai te explicar melhor. Um momento! 😊",
+                'resposta': f"Me desculpa, {nome_lead}! Vou te conectar com um consultor humano que vai te explicar melhor. Um momento! 😊",
                 'acao': 'transferir_humano',
                 'proximo_estado': 'finalizado',
                 'contexto_atualizado': session_state.contexto.model_dump(),
@@ -311,11 +311,11 @@ class AIConversationService:
         
         # Gerar reformulação específica
         reformulacao_prompt = self._gerar_prompt_reformulacao_simples(
-            session_state, lead_nome, tentativas
+            session_state, nome_lead, tentativas
         )
         
         resposta_reformulada = self._chamar_openai(
-            reformulacao_prompt, session_state.estado_atual, lead_nome
+            reformulacao_prompt, session_state.estado_atual, nome_lead
         )
         
         if resposta_reformulada:
@@ -331,7 +331,7 @@ class AIConversationService:
             }
         
         # Fallback se reformulação falhar
-        return self._gerar_fallback_response(session_state, lead_nome)
+        return self._gerar_fallback_response(session_state, nome_lead)
     
     def _determinar_proxima_acao(self, session_state: SessionState, 
                                 intencao: IntencaoLead) -> Tuple[Acao, Estado]:
@@ -358,7 +358,7 @@ class AIConversationService:
             return Acao.CONTINUAR, proximo_estado
     
     def _gerar_resposta_ia(self, session_state: SessionState, mensagem_lead: str,
-                          lead_canal: str, acao: Acao, proximo_estado: Estado, lead_nome: str) -> Optional[RespostaIA]:
+                          lead_canal: str, acao: Acao, proximo_estado: Estado, nome_lead: str) -> Optional[RespostaIA]:
         """Gera resposta usando IA com novo sistema de prompts"""
         
         # Construir contexto do prompt
@@ -366,7 +366,7 @@ class AIConversationService:
             estado_atual=session_state.estado_atual,
             slots_preenchidos=session_state.slots_preenchidos(),
             slots_faltantes=session_state.slots_faltantes(),
-            nome_lead=lead_nome,
+            nome_lead=nome_lead,
             canal=lead_canal,
             ultima_mensagem_lead=mensagem_lead,
             historico_compacto=[],  # Simplificado por ora
@@ -561,13 +561,13 @@ class AIConversationService:
         return self.intention_classifier.classificar_intencao_rapida(mensagem)
     
     def _finalizar_por_limite_mensagens(self, session_state: SessionState, 
-                                       lead_nome: str) -> Dict[str, Any]:
+                                       nome_lead: str) -> Dict[str, Any]:
         """Finaliza conversa por limite de mensagens"""
         
         if session_state.pode_agendar():
             return {
                 'success': True,
-                'resposta': f"Ótimo, {lead_nome}! Com base no que conversamos, posso te conectar com um consultor especialista. Que tal marcarmos 30 minutos? 1) amanhã 10h 2) amanhã 16h",
+                'resposta': f"Ótimo, {nome_lead}! Com base no que conversamos, posso te conectar com um consultor especialista. Que tal marcarmos 30 minutos? 1) amanhã 10h 2) amanhã 16h",
                 'acao': 'agendar',
                 'proximo_estado': 'agendamento',
                 'contexto_atualizado': session_state.contexto.model_dump(),
@@ -577,7 +577,7 @@ class AIConversationService:
         else:
             return {
                 'success': True,
-                'resposta': f"Foi um prazer conversar, {lead_nome}! Vou te mandar um material sobre investimentos independentes. Posso entrar em contato em alguns dias? 1) pode sim 2) prefiro não",
+                'resposta': f"Foi um prazer conversar, {nome_lead}! Vou te mandar um material sobre investimentos independentes. Posso entrar em contato em alguns dias? 1) pode sim 2) prefiro não",
                 'acao': 'finalizar',
                 'proximo_estado': 'educar',
                 'contexto_atualizado': session_state.contexto.model_dump(),
@@ -586,11 +586,11 @@ class AIConversationService:
             }
     
     def _gerar_fallback_response(self, session_state: SessionState, 
-                                lead_nome: str) -> Dict[str, Any]:
+                                nome_lead: str) -> Dict[str, Any]:
         """Gera resposta de fallback quando IA falha"""
         
         fallback_resposta = self.validation_service.get_fallback_response(
-            session_state.estado_atual, lead_nome
+            session_state.estado_atual, nome_lead
         )
         
         return {
@@ -603,14 +603,14 @@ class AIConversationService:
             'fallback_usado': True
         }
     
-    def _gerar_erro_response(self, estado_atual: str, lead_nome: str, 
+    def _gerar_erro_response(self, estado_atual: str, nome_lead: str, 
                            erro: str) -> Dict[str, Any]:
         """Gera resposta de erro"""
         
         return {
             'success': False,
             'error': erro,
-            'resposta': f"Desculpe, {lead_nome}. Tive um problema técnico. Pode repetir sua mensagem?",
+            'resposta': f"Desculpe, {nome_lead}. Tive um problema técnico. Pode repetir sua mensagem?",
             'acao': 'continuar',
             'proximo_estado': estado_atual,
             'contexto_atualizado': {},

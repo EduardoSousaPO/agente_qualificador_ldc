@@ -314,7 +314,7 @@ Vamos começar? 😊"""
             
             # Gerar resposta com IA (incluindo session_id para fallbacks)
             resposta_ia = self.ai_service.gerar_resposta_humanizada(
-                lead_nome=lead['nome'],
+                nome_lead=lead['nome'],
                 lead_canal=lead['canal'],
                 mensagem_lead=mensagem,
                 historico_conversa=historico,

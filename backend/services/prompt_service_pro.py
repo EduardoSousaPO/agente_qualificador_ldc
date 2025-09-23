@@ -112,7 +112,7 @@ Use as informações abaixo como base principal para responder à pergunta do le
         """Constrói prompt do usuário contextualizado baseado no estado e perfil"""
         
         estado = context.estado_atual
-        nome = context.lead_nome
+        nome = context.nome_lead
         mensagem_lead = context.mensagem_lead
         slots = context.slots
         
