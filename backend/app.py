@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 import logging
 import structlog
 from cachetools import TTLCache
+from pydantic import BaseModel, ValidationError
 
 # Imports dos serviços
 from backend.models.database_models import (
@@ -26,6 +27,77 @@ import time
 
 # 🔧 HOTFIX: Cache TTL robusto para deduplicação de mensagens WAHA
 DEDUP_CACHE = TTLCache(maxsize=10000, ttl=60)  # 10k mensagens, TTL 60s
+
+class ParsedWahaPayload(BaseModel):
+    """Define um contrato de dados limpo para informações extraídas do webhook do WAHA."""
+    telefone: str
+    nome: str
+    mensagem: str
+    message_id: str
+    is_from_me: bool
+
+def _parse_waha_payload(data: dict) -> ParsedWahaPayload:
+    """
+    Recebe o payload bruto do WAHA, extrai, limpa e valida os dados essenciais.
+    Esta função é o "portão de entrada" de dados, garantindo que o resto do sistema
+    receba apenas informações limpas e estruturadas.
+    """
+    payload = data.get('payload', data)
+    
+    if not payload or not isinstance(payload, dict):
+        raise ValueError("Payload do webhook está vazio ou em formato inválido.")
+
+    # 1. Extrair e validar 'from' (telefone)
+    telefone_raw = payload.get('from')
+    if not telefone_raw:
+        raise ValueError("Campo 'from' (telefone) ausente no payload.")
+    
+    telefone = ''.join(filter(str.isdigit, str(telefone_raw).split('@')[0]))
+    if not telefone:
+        raise ValueError(f"Não foi possível extrair um número de telefone válido de '{telefone_raw}'.")
+
+    # 2. Extrair e validar 'body' (mensagem)
+    mensagem = payload.get('body')
+    if mensagem is None: # Permite mensagens vazias, mas o campo deve existir
+        raise ValueError("Campo 'body' (mensagem) ausente no payload.")
+
+    # 3. Extrair 'id' da mensagem para deduplicação
+    message_id = payload.get('id', f"{telefone}_{int(time.time())}")
+
+    # 4. Verificar se a mensagem é do próprio agente
+    is_from_me = payload.get('fromMe', False)
+
+    # 5. Extrair 'nome' com múltiplas estratégias de fallback
+    nome_bruto = None
+    if payload.get('_data') and isinstance(payload['_data'], dict):
+        for field in ['notifyName', 'pushname', 'verifiedName', 'name']:
+            if payload['_data'].get(field):
+                nome_bruto = payload['_data'][field]
+                break
+    
+    if not nome_bruto and payload.get('contact') and isinstance(payload['contact'], dict):
+        for field in ['name', 'pushname', 'notifyName']:
+            if payload['contact'].get(field):
+                nome_bruto = payload['contact'][field]
+                break
+
+    if not nome_bruto:
+        nome_bruto = payload.get('pushName') # Campo comum no root do payload
+
+    # 6. Limpar e definir fallback para o nome
+    if nome_bruto and str(nome_bruto).strip():
+        nome_final = str(nome_bruto).strip().split()[0].capitalize()
+    else:
+        # Fallback CRÍTICO: se não houver nome, usa o número para evitar erros
+        nome_final = telefone
+
+    return ParsedWahaPayload(
+        telefone=telefone,
+        nome=nome_final,
+        mensagem=mensagem,
+        message_id=message_id,
+        is_from_me=is_from_me
+    )
 
 def cleanup_message_cache():
     """Cache TTL automático - função mantida por compatibilidade"""
@@ -45,8 +117,10 @@ def is_duplicate_message(message_id, telefone):
     DEDUP_CACHE[cache_key] = True
     return False
 
+# As funções extrair_nome_lead e limpar_telefone_waha foram consolidadas em _parse_waha_payload
+# e podem ser removidas em uma limpeza futura para manter o código mais limpo.
 def extrair_nome_lead(payload):
-    """Extrai nome real do lead do payload WhatsApp WAHA com estrutura real"""
+    """[DEPRECATED] Extrai nome real do lead do payload WhatsApp WAHA com estrutura real"""
     nome_real = None
     
     # Log detalhado do payload para debug
@@ -227,232 +301,75 @@ def health_check():
 
 @app.route('/webhook', methods=['GET', 'POST'])
 def webhook_whatsapp():
-    """Webhook para receber mensagens do WAHA"""
+    """Webhook para receber mensagens do WAHA, agora com lógica de parsing e validação centralizada."""
+    if request.method == 'GET':
+        logger.info("Teste de webhook GET recebido com sucesso.")
+        return jsonify({'status': 'webhook_online'}), 200
+
     try:
-        # Teste de conectividade GET
-        if request.method == 'GET':
-            logger.info("=== TESTE WEBHOOK GET ===", 
-                       method=request.method,
-                       url=request.url,
-                       headers=dict(request.headers))
-            return jsonify({
-                'status': 'webhook_online',
-                'message': 'Webhook funcionando - WAHA pode enviar POST aqui',
-                'url': request.url,
-                'timestamp': datetime.utcnow().isoformat()
-            }), 200
-        
-        # Processamento normal POST
         data = request.get_json()
-        logger.info("=== WEBHOOK RECEBIDO ===", 
-                   data=data, 
-                   headers=dict(request.headers),
-                   method=request.method,
-                   url=request.url)
+        if not data:
+            logger.warning("Webhook recebeu requisição sem corpo JSON.")
+            return jsonify({'status': 'empty_request'}), 200
+
+        logger.info("=== WEBHOOK RECEBIDO ===", raw_data=data)
         
-        # Extrair dados da estrutura WAHA
-        # CORREÇÃO: WAHA pode enviar dados diretamente no root ou dentro de 'payload'
-        if 'payload' in data and data['payload']:
-            # Estrutura com payload wrapper
-            payload = data.get('payload', {})
-            event_type = data.get('event', '')
-        else:
-            # Estrutura direta (dados no root)
-            payload = data
-            event_type = data.get('event', '')
-        
-        # Log detalhado para debug de estrutura
-        logger.info("Estrutura WAHA analisada", 
-                   event_type=event_type,
-                   has_payload_wrapper='payload' in data,
-                   payload_keys=list(payload.keys()) if payload else [],
-                   raw_data_keys=list(data.keys()),
-                   from_in_payload='from' in payload if payload else False,
-                   body_in_payload='body' in payload if payload else False)
-        
-        # Aceitar apenas eventos essenciais para WAHA Core
-        # message: mensagens recebidas específicas
-        # message.any: todas as mensagens (inclui message)
-        # session.status: status da sessão WhatsApp
-        # message.edited: mensagens editadas (WAHA 2025.6+)
-        valid_events = ['message', 'message.any', 'session.status', 'message.edited']
-        if event_type not in valid_events:
-            logger.info("Evento ignorado", event_type=event_type, valid_events=valid_events)
-            return jsonify({'status': 'ignored', 'event_type': event_type}), 200
-        
-        # Processar eventos especiais (não processam mensagens)
+        event_type = data.get('event')
         if event_type == 'session.status':
-            logger.info("Processando evento de status da sessão")
-            return handle_session_status(payload)
-        elif event_type == 'message.edited':
-            logger.info("Processando mensagem editada")
-            return handle_message_edited(payload)
+            return handle_session_status(data.get('payload', data))
         
-        # Processar mensagens: tanto 'message' quanto 'message.any' são válidos
-        if event_type not in ['message', 'message.any']:
-            logger.info("Evento não é mensagem, ignorando processamento", event_type=event_type)
-            return jsonify({'status': 'not_message_event'}), 200
+        valid_events = ['message', 'message.any']
+        if event_type not in valid_events:
+            logger.info("Evento ignorado (não é uma mensagem)", event_type=event_type)
+            return jsonify({'status': 'ignored_event'}), 200
+
+        # Ponto de entrada ÚNICO para parsing e validação
+        parsed_data = _parse_waha_payload(data)
+
+        if parsed_data.is_from_me:
+            logger.info("Mensagem própria ignorada", message_id=parsed_data.message_id)
+            return jsonify({'status': 'own_message_ignored'}), 200
         
-        # Log do tipo de evento de mensagem processado
-        logger.info("Processando evento de mensagem", event_type=event_type)
-        
-        # Continuar com processamento normal para evento 'message'
-        
-        # Validar estrutura da mensagem WAHA
-        logger.info("Validando payload", 
-                   payload_exists=bool(payload), 
-                   payload_keys=list(payload.keys()) if payload else [],
-                   from_exists='from' in payload if payload else False,
-                   body_exists='body' in payload if payload else False)
-        
-        # Log COMPLETO do payload para debug (apenas primeiros 200 chars de cada campo)
-        if payload:
-            payload_debug = {}
-            for k, v in payload.items():
-                if isinstance(v, (str, int, bool)):
-                    payload_debug[k] = str(v)[:200] if len(str(v)) > 200 else v
-                elif isinstance(v, dict):
-                    payload_debug[k] = f"dict_com_{len(v)}_campos: {list(v.keys())[:5]}"
-                elif isinstance(v, list):
-                    payload_debug[k] = f"list_com_{len(v)}_items"
-                else:
-                    payload_debug[k] = str(type(v))
-            
-            logger.info("🔍 PAYLOAD COMPLETO DEBUG", payload_debug=payload_debug)
-        
-        # Log EXTRA para debug do problema do telefone e payload completo
-        logger.info("🚨 DEBUG TELEFONE", 
-                   raw_data_keys=list(data.keys()),
-                   payload_keys=list(payload.keys()) if payload else [],
-                   from_in_data='from' in data,
-                   from_value_in_data=data.get('from', 'AUSENTE'),
-                   from_in_payload='from' in payload if payload else False,
-                   from_value_in_payload=payload.get('from', 'AUSENTE') if payload else 'PAYLOAD_VAZIO')
-        
-        # Log do payload bruto completo (conforme sugestão do usuário)
-        logger.info("📋 PAYLOAD BRUTO COMPLETO", 
-                   payload_raw=str(data)[:500],  # Primeiros 500 chars para não sobrecarregar logs
-                   event_type=event_type,
-                   payload_size=len(str(data)))
-        
-        if not payload:
-            logger.warning("Payload vazio", data=data)
-            return jsonify({'status': 'empty_payload'}), 400
-            
-        if 'from' not in payload:
-            logger.warning("Campo 'from' ausente no payload", payload_keys=list(payload.keys()))
-            return jsonify({'status': 'missing_from_field'}), 400
-            
-        if 'body' not in payload:
-            logger.warning("Campo 'body' ausente no payload", payload_keys=list(payload.keys()))
-            return jsonify({'status': 'missing_body_field'}), 400
-        
-        # Ignorar mensagens próprias
-        if payload.get('fromMe', False):
-            logger.info("Mensagem própria ignorada")
-            return jsonify({'status': 'own_message'}), 200
-        
-        telefone_raw = payload['from']
-        mensagem = payload['body']
-        
-        # Limpar telefone do formato WAHA (ex: 555124150039@c.us)
-        telefone = limpar_telefone_waha(telefone_raw)
-        if not telefone:
-            logger.error("Falha ao extrair telefone válido", 
-                        telefone_raw=repr(telefone_raw),
-                        payload_keys=list(payload.keys()))
-            return jsonify({'status': 'invalid_phone'}), 400
-        
-        # Verificar deduplicação de mensagens
-        message_id = payload.get('id', f"{telefone}_{int(time.time())}")
-        if is_duplicate_message(message_id, telefone):
-            logger.info("Mensagem duplicada ignorada", 
-                       telefone=telefone, 
-                       message_id=message_id,
-                       mensagem=mensagem[:50])
-            return jsonify({'status': 'duplicate_message'}), 200
-        
-        # Extrair nome do contato com função melhorada
-        nome_contato = extrair_nome_lead(payload)
-        
+        if is_duplicate_message(parsed_data.message_id, parsed_data.telefone):
+            logger.info("Mensagem duplicada ignorada", message_id=parsed_data.message_id)
+            return jsonify({'status': 'duplicate_message_ignored'}), 200
+
+        # A partir daqui, trabalhamos apenas com dados limpos e garantidos
+        telefone = parsed_data.telefone
+        nome_contato = parsed_data.nome
+        mensagem = parsed_data.mensagem
+
         # Buscar ou criar lead
-        logger.info("Buscando lead por telefone", 
-                   telefone=telefone, 
-                   telefone_type=type(telefone).__name__,
-                   telefone_length=len(telefone) if telefone else 0)
-        
         lead_data = lead_repo.get_lead_by_phone(telefone)
-        
-        # Log do resultado da busca
-        logger.info("Resultado busca lead por telefone", 
-                   telefone=telefone,
-                   lead_encontrado=bool(lead_data),
-                   lead_id=lead_data.get('id') if lead_data else None,
-                   lead_telefone=lead_data.get('telefone') if lead_data else None,
-                   nome_lead=lead_data.get('nome') if lead_data else None)
-        
         if not lead_data:
-            # Lead não encontrado - criar automaticamente
-            logger.info("Criando novo lead automaticamente", telefone=telefone, nome_contato=nome_contato)
-            
-            # Usar nome real do contato ou fallback mais humano
-            if nome_contato:
-                nome_lead = nome_contato
-                logger.info("Usando nome real do contato", nome_original=nome_contato, nome_usado=nome_lead)
-            else:
-                # Fallback mais humano - evitar "Lead 1234"
-                nome_lead = "Amigo"  # Muito mais humano e acolhedor
-                logger.info("Usando fallback humano", nome_usado=nome_lead)
-            
-            # Criar novo lead
-            novo_lead = Lead(
-                nome=nome_lead,
-                telefone=telefone,
-                canal='whatsapp',  # Canal correto para mensagens via WhatsApp
-                status='novo'
-            )
-            
+            logger.info("Criando novo lead", telefone=telefone, nome_contato=nome_contato)
+            novo_lead = Lead(nome=nome_contato, telefone=telefone, canal='whatsapp', status='novo')
             lead_data = lead_repo.create_lead(novo_lead)
-            
             if not lead_data:
-                logger.error("Falha ao criar novo lead automaticamente", telefone=telefone)
-                return jsonify({'status': 'failed_to_create_lead'}), 500
-            
-            logger.info("Novo lead criado com sucesso", 
-                       lead_id=lead_data.get('id'), 
-                       nome=nome_lead, 
-                       telefone=telefone,
-                       nome_original=nome_contato)
-        
-        # Log antes do processamento
-        logger.info("Iniciando processamento IA", 
-                   lead_id=lead_data['id'],
-                   lead_telefone_atual=lead_data.get('telefone'),
-                   mensagem_length=len(mensagem) if mensagem else 0)
-        
-        # Processar mensagem recebida
+                logger.error("Falha ao criar novo lead", telefone=telefone)
+                return jsonify({'status': 'error_creating_lead'}), 200
+
+        logger.info("Iniciando processamento da mensagem", lead_id=lead_data['id'])
+
+        # Processar a mensagem com o serviço de qualificação
         resultado = qualification_service.processar_mensagem_recebida(
             lead_data['id'], mensagem
         )
         
-        if resultado['success']:
-            logger.info("Mensagem processada com sucesso", 
-                       lead_id=lead_data['id'], 
-                       resultado=resultado)
+        if resultado.get('success', False):
+            logger.info("Mensagem processada com sucesso", lead_id=lead_data['id'], resultado=resultado)
         else:
-            logger.error("Erro ao processar mensagem", 
-                        lead_id=lead_data['id'], 
-                        error=resultado.get('error'))
+            logger.error("Erro ao processar mensagem", lead_id=lead_data['id'], error=resultado.get('error'))
         
         return jsonify({'status': 'processed', 'result': resultado}), 200
+
+    except (ValidationError, ValueError) as e:
+        logger.warning("Erro de validação do payload do webhook", error=str(e), request_data=request.data[:500].decode('utf-8', errors='ignore'))
+        return jsonify({'status': 'validation_error', 'details': str(e)}), 200
         
     except Exception as e:
-        # 🔧 HOTFIX: Sempre retorna 200 para evitar retry storms do WAHA
-        logger.exception("Erro no webhook - retornando 200 para evitar retries", 
-                        error=str(e),
-                        telefone=payload.get('from', 'UNKNOWN')[:20],
-                        mensagem=payload.get('body', '')[:100])
-        return jsonify({'status': 'error_handled', 'message': 'Erro processado internamente'}), 200
+        logger.exception("Erro crítico no webhook", error=str(e))
+        return jsonify({'status': 'internal_error_handled'}), 200
 
 
 @app.route('/leads', methods=['GET'])
