@@ -17,6 +17,7 @@ from .validation_service import ValidationService
 from .slot_filling_service import SlotFillingService
 from .guardrails_service import GuardrailsService
 from .intention_classifier import IntentionClassifier
+from .rag_service import RAGService
 
 from backend.models.conversation_models import (
     RespostaIA, IntencaoLead, PromptContext, SessionState, Estado, Acao,
@@ -41,6 +42,7 @@ class AIConversationService:
         self.slot_filling_service = SlotFillingService()
         self.guardrails_service = GuardrailsService()
         self.intention_classifier = IntentionClassifier()
+        self.rag_service = RAGService()
         
         # Cache de sessões em memória (em produção usar Redis)
         self.session_cache = {}
@@ -121,9 +123,9 @@ class AIConversationService:
         # Reset do contador de erros
         if hasattr(session_state, 'session_id'):
             self.error_counts[session_state.session_id] = 0
-        
-        return {
-            'success': True,
+            
+            return {
+                'success': True,
             'resposta': resposta_transicao,
             'proximo_estado': session_state.estado_atual.value,
             'contexto': {},
@@ -146,33 +148,35 @@ class AIConversationService:
         }
         return fallbacks.get(estado, f"Vamos seguir {nome_lead}? Me diga como posso ajudar!")
         
-    def gerar_resposta_humanizada(self, 
-                                  lead_nome: str,
-                                  lead_canal: str,
-                                  mensagem_lead: str,
-                                  historico_conversa: List[Dict[str, str]],
-                                  estado_atual: str,
-                                  session_id: str = None) -> Dict[str, Any]:
+    def gerar_resposta_humanizada(
+        self,
+        lead_nome: str,
+        lead_canal: str,
+        mensagem_lead: str,
+        historico_conversa: List[Dict[str, str]],
+        estado_atual: str,
+        session_id: str = None
+    ) -> Dict[str, Any]:
         """
         Gera resposta humanizada usando novo sistema estruturado
         """
         try:
             # Converter estado para enum
             estado_enum = Estado(estado_atual)
-            
+
             # Obter ou criar estado da sessão
             session_state = self._get_or_create_session_state(
                 session_id, lead_nome, estado_enum, historico_conversa
             )
-            
+
             # Verificar limites de mensagens
             if session_state.mensagem_count >= MAX_MENSAGENS_POR_CONVERSA:
                 return self._finalizar_por_limite_mensagens(session_state, lead_nome)
-            
+
             # NOVO: Detectar se lead não compreendeu
             if self._detectar_nao_compreensao(mensagem_lead):
                 return self._processar_reformulacao(session_state, mensagem_lead, lead_nome)
-            
+
             # NOVO: Verificar se a resposta gerada anteriormente causou loop
             # (isso previne que o sistema fique gerando mensagens de erro repetidas)
             if session_id and len(historico_conversa) >= 2:
@@ -181,46 +185,48 @@ class AIConversationService:
                     if msg.get('tipo') == 'enviada':
                         ultima_resposta_agente = msg.get('conteudo', '')
                         break
-                
+
                 if ultima_resposta_agente and self._detectar_loop_erro(session_id, ultima_resposta_agente):
                     logger.info("Loop detectado, enviando mensagem de transição", session_id=session_id)
                     return self._gerar_resposta_transicao(session_state, lead_nome)
-            
+
             # Extrair slots da mensagem do lead
             session_state.contexto = self.slot_filling_service.extrair_slots_da_mensagem(
                 mensagem_lead, session_state.estado_atual, session_state.contexto
             )
-            
+
             # Analisar intenção do lead
             intencao = self.analisar_intencao_lead(mensagem_lead)
-            
+
             # Determinar próxima ação baseada na intenção e slots
             proxima_acao, proximo_estado = self._determinar_proxima_acao(
                 session_state, intencao
             )
-            
+
             # Gerar resposta usando IA
             resposta_ia = self._gerar_resposta_ia(
                 session_state, mensagem_lead, lead_canal, proxima_acao, proximo_estado, lead_nome
             )
-            
+
             if not resposta_ia:
                 return self._gerar_fallback_response(session_state, lead_nome)
-            
+
             # Atualizar estado da sessão
             session_state.estado_atual = resposta_ia.proximo_estado
             session_state.contexto = resposta_ia.contexto
             session_state.mensagem_count += 1
-            
+
             # Salvar estado atualizado
             self._save_session_state(session_id, session_state)
-            
-            logger.info("Resposta gerada com sucesso", 
-                       lead_nome=lead_nome, 
-                       estado=resposta_ia.proximo_estado,
-                       acao=resposta_ia.acao,
-                       score=resposta_ia.score_parcial)
-            
+
+            logger.info(
+                "Resposta gerada com sucesso",
+                lead_nome=lead_nome,
+                estado=resposta_ia.proximo_estado,
+                acao=resposta_ia.acao,
+                score=resposta_ia.score_parcial
+            )
+
             return {
                 'success': True,
                 'resposta': resposta_ia.mensagem,
@@ -231,11 +237,10 @@ class AIConversationService:
                 'slots_preenchidos': session_state.slots_preenchidos(),
                 'pode_agendar': session_state.pode_agendar()
             }
-            
+
         except Exception as e:
             logger.error("Erro ao gerar resposta IA", error=str(e), lead_nome=lead_nome)
             return self._gerar_erro_response(estado_atual, lead_nome, str(e))
-    
     def _get_or_create_session_state(self, session_id: str, lead_nome: str, 
                                    estado_atual: Estado, historico: List[Dict[str, str]]) -> SessionState:
         """Obtém ou cria estado da sessão"""
@@ -367,7 +372,8 @@ class AIConversationService:
             historico_compacto=[],  # Simplificado por ora
             tentativas_estado=self.tentativas_reformulacao.get(
                 f"{session_state.session_id}_{session_state.estado_atual}", 0
-            )
+            ),
+            contexto_rag=self.rag_service.consultar_base_conhecimento(mensagem_lead)
         )
         
         # Chamar OpenAI

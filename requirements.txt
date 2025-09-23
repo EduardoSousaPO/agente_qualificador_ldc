@@ -16,9 +16,9 @@ google-auth-httplib2==0.2.0
 google-api-python-client==2.112.0
 openai==1.6.1
 
-# Processamento de dados
-pandas==2.1.4
-numpy==1.26.2
+# Processamento de dados (removido por não ser essencial e causar erros de build)
+# pandas==2.2.2
+# numpy==1.26.4
 
 # Utilitários
 schedule==1.2.0
@@ -37,10 +37,14 @@ flake8==6.1.0
 structlog==23.2.0
 
 # Validação de dados
-pydantic==2.5.0
+pydantic==2.7.4
 
 # Servidor web
 gunicorn
+
+# RAG e Processamento de Texto
+langchain-text-splitters==0.0.1
+tiktoken==0.5.2
 
 
 
