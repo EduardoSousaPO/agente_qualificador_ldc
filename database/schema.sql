@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS public.leads (
     nome VARCHAR(255) NOT NULL,
     telefone VARCHAR(20) UNIQUE NOT NULL,
     email VARCHAR(255),
-    canal VARCHAR(50) NOT NULL CHECK (canal IN ('youtube', 'newsletter', 'ebook', 'meta_ads')),
+    canal VARCHAR(50) NOT NULL CHECK (canal IN ('youtube', 'newsletter', 'ebook', 'meta_ads', 'whatsapp')),
     status VARCHAR(50) DEFAULT 'novo' CHECK (status IN ('novo', 'em_qualificacao', 'qualificado', 'nao_qualificado', 'reuniao_agendada', 'finalizado')),
     score INTEGER DEFAULT 0 CHECK (score >= 0 AND score <= 100),
     processado BOOLEAN DEFAULT FALSE,

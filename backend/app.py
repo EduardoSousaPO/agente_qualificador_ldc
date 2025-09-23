@@ -933,79 +933,8 @@ def handle_message_edited(payload):
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
-@app.route('/webhook-n8n-test', methods=['POST'])
-def webhook_n8n_test():
-    """🆕 WEBHOOK TESTE PARA INTEGRAÇÃO N8N PARALELA"""
-    try:
-        payload = request.get_json()
-        
-        logger.info("🧪 Webhook N8N teste recebido", 
-                   payload_keys=list(payload.keys()) if payload else [],
-                   content_sample=str(payload)[:200] if payload else "")
-        
-        # Verificar se é um webhook do n8n
-        if payload and payload.get('processedBy') == 'n8n':
-            logger.info("✅ Mensagem processada pelo N8N detectada", 
-                       phone=payload.get('phone'),
-                       messageId=payload.get('messageId'))
-            
-            return jsonify({
-                'status': 'n8n_message_received',
-                'message': 'Mensagem do N8N processada com sucesso',
-                'timestamp': datetime.now().isoformat(),
-                'original_data': payload,
-                'test_mode': True
-            }), 200
-        
-        # Se não é do n8n, processar como teste normal
-        logger.info("🧪 Processando mensagem de teste (não N8N)")
-        
-        return jsonify({
-            'status': 'test_processed',
-            'message': 'Webhook teste processado com sucesso',
-            'timestamp': datetime.now().isoformat(),
-            'payload_received': payload,
-            'note': 'Este é um endpoint de teste para integração N8N'
-        }), 200
-        
-    except Exception as e:
-        logger.error("Erro no webhook teste N8N", error=str(e))
-        return jsonify({
-            'status': 'error', 
-            'error': str(e),
-            'test_mode': True
-        }), 500
 
 
-@app.route('/n8n-integration-status', methods=['GET'])
-def n8n_integration_status():
-    """🆕 STATUS DA INTEGRAÇÃO N8N"""
-    try:
-        return jsonify({
-            'status': 'active',
-            'integration_mode': 'parallel_testing',
-            'endpoints': {
-                'main_webhook': '/webhook',
-                'n8n_test_webhook': '/webhook-n8n-test',
-                'health_check': '/health'
-            },
-            'n8n_workflows': {
-                'message_processor': '0Zp4fI6yvMbgvO4a',
-                'smart_analyzer': 'ymw3xSkOXZHwg23O',
-                'system_monitor': '9QgC0kG5oCV1kgU3'
-            },
-            'system_info': {
-                'backend_url': 'https://agente-qualificador-ldc.onrender.com',
-                'n8n_url': 'https://agenteia-n8n.dqlhjk.easypanel.host',
-                'parallel_mode': True,
-                'fallback_enabled': True
-            },
-            'timestamp': datetime.now().isoformat()
-        }), 200
-        
-    except Exception as e:
-        logger.error("Erro ao obter status integração N8N", error=str(e))
-        return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

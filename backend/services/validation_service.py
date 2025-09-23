@@ -331,19 +331,29 @@ class ValidationService:
         
         return next_states.get(current_state, Estado.FINALIZADO).value
     
-    def _get_fallback_message(self, estado: Estado, nome_lead: str) -> str:
-        """Retorna mensagem de fallback por estado"""
+    def _get_fallback_message(self, estado: Estado, nome_lead: Optional[str]) -> str:
+        """Retorna mensagem de fallback por estado, lidando com nome opcional."""
         
+        # Define a saudação baseada na presença do nome
+        saudacao = f"Oi {nome_lead}! " if nome_lead else "Olá! "
+
         fallbacks = {
-            Estado.INICIO: f"Oi {nome_lead}! Sou da LDC Capital. Posso te ajudar com investimentos? 1) sim 2) agora não",
-            Estado.SITUACAO: f"Legal, {nome_lead}! Você já investe hoje ou está começando? 1) já invisto 2) começando",
-            Estado.PATRIMONIO: f"Show, {nome_lead}! Qual faixa você tem? 1) até 100k 2) 100-500k 3) +500k",
-            Estado.OBJETIVO: f"Perfeito, {nome_lead}! O que busca? 1) crescimento 2) renda mensal 3) aposentadoria",
-            Estado.AGENDAMENTO: f"Ótimo, {nome_lead}! Posso agendar 30min? 1) amanhã 10h 2) amanhã 16h",
-            Estado.FINALIZADO: f"Obrigado, {nome_lead}! Foi um prazer conversar com você! 😊"
+            Estado.INICIO: f"{saudacao}Sou da LDC Capital. Posso te ajudar com investimentos? 1) sim 2) agora não",
+            Estado.SITUACAO: f"Legal! Você já investe hoje ou está começando? 1) já invisto 2) começando",
+            Estado.PATRIMONIO: f"Show! Qual faixa você tem? 1) até 100k 2) 100-500k 3) +500k",
+            Estado.OBJETIVO: f"Perfeito! O que busca? 1) crescimento 2) renda mensal 3) aposentadoria",
+            Estado.AGENDAMENTO: f"Ótimo! Posso agendar 30min? 1) amanhã 10h 2) amanhã 16h",
+            Estado.FINALIZADO: f"Obrigado! Foi um prazer conversar com você! 😊"
         }
         
-        return fallbacks.get(estado, f"Desculpe, {nome_lead}. Pode repetir?")
+        # Para estados que dependem mais do nome, ajustamos a mensagem se o nome não existir
+        if not nome_lead:
+            fallbacks[Estado.SITUACAO] = "Você já investe hoje ou está começando? 1) já invisto 2) começando"
+            fallbacks[Estado.PATRIMONIO] = "Qual a sua faixa de patrimônio para investimentos? 1) até 100k 2) 100-500k 3) +500k"
+            fallbacks[Estado.OBJETIVO] = "Qual o seu principal objetivo ao investir? 1) crescimento 2) renda mensal 3) aposentadoria"
+            fallbacks[Estado.AGENDAMENTO] = "Podemos agendar uma conversa de 30 minutos? Tenho horários amanhã às 10h e 16h."
+
+        return fallbacks.get(estado, f"Desculpe, pode repetir, por favor?")
     
     def _create_fallback_validation(self, estado: Estado, nome_lead: str, erro: str) -> ValidacaoResposta:
         """Cria validação com resposta de fallback"""
@@ -369,7 +379,7 @@ class ValidationService:
         
         for estado in Estado:
             fallbacks[estado] = RespostaIA(
-                mensagem=self._get_fallback_message(estado, "Amigo"),
+                mensagem=self._get_fallback_message(estado, None), # Usar None em vez de "Amigo"
                 acao=Acao.CONTINUAR if estado != Estado.FINALIZADO else Acao.FINALIZAR,
                 proximo_estado=Estado(self._get_default_next_state(estado)),
                 contexto=ContextoConversa(),
@@ -382,10 +392,12 @@ class ValidationService:
         """Retorna resposta de fallback para um estado"""
         
         base_response = self.fallback_responses.get(estado)
-        if base_response and nome_lead != "Amigo":
-            # Personalizar com nome real
+        
+        # Se a resposta base existir e tivermos um nome de lead, personalizamos a mensagem.
+        if base_response and nome_lead:
             data = base_response.model_dump()
-            data['mensagem'] = data['mensagem'].replace("Amigo", nome_lead)
+            # Gera uma nova mensagem de fallback, desta vez com o nome do lead.
+            data['mensagem'] = self._get_fallback_message(estado, nome_lead)
             return RespostaIA(**data)
         
         return base_response or self.fallback_responses[Estado.FINALIZADO]

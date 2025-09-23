@@ -17,6 +17,7 @@ class SlotFillingService:
     """Serviço para preenchimento inteligente de slots"""
     
     def __init__(self):
+        # Lógica de reconhecimento foi internalizada para simplificar o design.
         self.patrimonio_patterns = self._build_patrimonio_patterns()
         self.objetivo_patterns = self._build_objetivo_patterns()
         self.urgencia_patterns = self._build_urgencia_patterns()

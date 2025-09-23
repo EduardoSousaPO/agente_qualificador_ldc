@@ -102,19 +102,16 @@ class Qualificacao:
     urgencia_pontos: int = 0
     interesse_resposta: Optional[str] = None
     interesse_pontos: int = 0
+    score_total: Optional[int] = None  # Este campo é preenchido pelo DB
     resultado: Optional[str] = None
     observacoes: Optional[str] = None
     id: Optional[str] = None
     created_at: Optional[datetime] = None
-    
-    @property
-    def score_total(self) -> int:
-        """Calcula score total automaticamente"""
-        return self.patrimonio_pontos + self.objetivo_pontos + self.urgencia_pontos + self.interesse_pontos
-    
+
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
-        data = {k: v for k, v in data.items() if v is not None and k not in ['id', 'created_at']}
+        # score_total é removido pois é gerado pelo banco de dados
+        data = {k: v for k, v in data.items() if v is not None and k not in ['id', 'created_at', 'score_total']}
         return data
 
 
@@ -136,6 +133,29 @@ class SystemLog:
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
         data = {k: v for k, v in data.items() if v is not None and k not in ['id', 'created_at']}
+        return data
+
+
+@dataclass
+class Reuniao:
+    """Modelo da Reunião"""
+    lead_id: str
+    data_agendada: Optional[datetime] = None
+    status: str = 'agendada'
+    link_reuniao: Optional[str] = None
+    observacoes: Optional[str] = None
+    id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Converte para dicionário para inserção no banco"""
+        data = asdict(self)
+        # Converte datetime para string ISO 8601 se não for None
+        if data.get('data_agendada'):
+            data['data_agendada'] = data['data_agendada'].isoformat()
+            
+        data = {k: v for k, v in data.items() if v is not None and k not in ['id', 'created_at', 'updated_at']}
         return data
 
 
@@ -391,57 +411,49 @@ class SystemLogRepository:
             return []
 
 
-class QualificacaoRepository:
-    """Repository para operações com Qualificações"""
-    
+class ReuniaoRepository:
+    """Repository para operações com Reunioes"""
+
     def __init__(self, db: DatabaseConnection):
         self.db = db.get_client()
-    
-    def create_qualificacao(self, qualificacao: Qualificacao) -> Optional[Dict[str, Any]]:
-        """Cria uma nova qualificação"""
+
+    def create_reuniao(self, reuniao: Reuniao) -> Optional[Dict[str, Any]]:
+        """Agenda uma nova reunião"""
         try:
-            result = self.db.table('qualificacoes').insert(qualificacao.to_dict()).execute()
+            result = self.db.table('reunioes').insert(reuniao.to_dict()).execute()
             return result.data[0] if result.data else None
         except Exception as e:
-            return None
-    
-    def get_by_lead_id(self, lead_id: str) -> Optional[Dict[str, Any]]:
-        """Busca qualificação por lead_id"""
-        try:
-            result = self.db.table('qualificacoes').select('*').eq('lead_id', lead_id).execute()
-            return result.data[0] if result.data else None
-        except Exception:
+            self.log_error(f"Erro ao criar reunião: {str(e)}", {'reuniao_data': reuniao.to_dict()})
             return None
 
-
-class SystemLogRepository:
-    """Repository para logs do sistema"""
-    
-    def __init__(self, db: DatabaseConnection):
-        self.db = db.get_client()
-    
-    def create_log(self, log: SystemLog) -> bool:
-        """Cria um log"""
+    def get_reunioes_by_lead(self, lead_id: str) -> List[Dict[str, Any]]:
+        """Busca reuniões de um lead"""
         try:
-            self.db.table('system_logs').insert(log.to_dict()).execute()
-            return True
-        except Exception:
+            result = self.db.table('reunioes').select('*').eq('lead_id', lead_id).order('data_agendada').execute()
+            return result.data or []
+        except Exception as e:
+            self.log_error(f"Erro ao buscar reuniões do lead: {str(e)}", {'lead_id': lead_id})
+            return []
+
+    def update_reuniao(self, reuniao_id: str, updates: Dict[str, Any]) -> bool:
+        """Atualiza uma reunião"""
+        try:
+            result = self.db.table('reunioes').update(updates).eq('id', reuniao_id).execute()
+            return len(result.data) > 0
+        except Exception as e:
+            self.log_error(f"Erro ao atualizar reunião: {str(e)}", {'reuniao_id': reuniao_id, 'updates': updates})
             return False
-    
-    def get_recent_logs(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Busca logs recentes"""
+
+    def log_error(self, evento: str, detalhes: Dict[str, Any] = None):
+        """Log de erro interno"""
         try:
-            result = self.db.table('system_logs').select('*').order('created_at', desc=True).limit(limit).execute()
-            return result.data or []
-        except Exception:
-            return []
-    
-    def get_error_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
-        """Busca logs de erro"""
-        try:
-            result = self.db.table('system_logs').select('*').eq('nivel', 'ERROR').order('created_at', desc=True).limit(limit).execute()
-            return result.data or []
-        except Exception:
-            return []
+            log = SystemLog(
+                nivel='ERROR',
+                evento=evento,
+                detalhes=detalhes or {}
+            )
+            self.db.table('system_logs').insert(log.to_dict()).execute()
+        except:
+            pass
 
 

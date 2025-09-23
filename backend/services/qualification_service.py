@@ -10,7 +10,7 @@ import structlog
 from backend.models.database_models import Session, Message, Qualificacao, SystemLog
 from backend.services.scoring_service import ScoringService
 from backend.services.whatsapp_service import WhatsAppService
-from backend.services.ai_conversation_service_fixed import AIConversationServiceFixed as AIConversationService
+from backend.services.ai_conversation_service import AIConversationService
 
 logger = structlog.get_logger()
 
@@ -680,12 +680,12 @@ Vamos começar? 😊"""
             # Gerar mensagem de resultado
             if resultado_scoring.resultado == 'qualificado':
                 mensagem_resultado = self.whatsapp_service.gerar_mensagem_score_alto(
-                    "Cliente",  # TODO: pegar nome real do lead
+                    contexto.get('nome', 'Cliente'),
                     resultado_scoring.score_total
                 )
             else:
                 mensagem_resultado = self.whatsapp_service.gerar_mensagem_score_baixo(
-                    "Cliente",  # TODO: pegar nome real do lead
+                    contexto.get('nome', 'Cliente'),
                     resultado_scoring.score_total
                 )
             

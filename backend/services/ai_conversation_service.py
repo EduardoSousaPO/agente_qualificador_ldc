@@ -12,7 +12,6 @@ from typing import Dict, Any, List, Optional, Tuple
 import structlog
 from pydantic import ValidationError
 
-from .reconhecimento_respostas import ReconhecimentoRespostasService
 from .prompt_service_pro import PromptServicePro
 from .validation_service import ValidationService
 from .slot_filling_service import SlotFillingService
@@ -42,7 +41,6 @@ class AIConversationService:
         self.slot_filling_service = SlotFillingService()
         self.guardrails_service = GuardrailsService()
         self.intention_classifier = IntentionClassifier()
-        self.reconhecimento_service = ReconhecimentoRespostasService()
         
         # Cache de sessões em memória (em produção usar Redis)
         self.session_cache = {}
@@ -307,8 +305,8 @@ class AIConversationService:
             }
         
         # Gerar reformulação específica
-        reformulacao_prompt = self.prompt_service.build_reformulacao_prompt(
-            session_state.estado_atual, lead_nome, tentativas
+        reformulacao_prompt = self._gerar_prompt_reformulacao_simples(
+            session_state, lead_nome, tentativas
         )
         
         resposta_reformulada = self._chamar_openai(
@@ -527,44 +525,16 @@ class AIConversationService:
         except requests.exceptions.Timeout:
             logger.error("Timeout na chamada OpenAI")
 
-    def _get_emergency_fallback(self, context: PromptContext) -> str:
-        """Fallback emergencial com novo sistema"""
-        nome = context.nome_lead
-        estado = context.estado_atual
+    def _gerar_prompt_reformulacao_simples(self, session_state: SessionState, nome_lead: str, tentativa: int) -> str:
+        """NOVO: Gera um prompt de reformulação simples e direto."""
         
-        if estado == "inicio":
-            return f"Oi {nome}! Sou Rafael, consultor da LDC Capital. Você tem interesse em investimentos? 1) sim 2) não"
-        elif estado == "situacao":  
-            return f"Legal, {nome}! Você já investe hoje ou está começando? 1) já invisto 2) começando"
-        elif estado == "patrimonio":
-            return f"Entendi, {nome}. Você está mais na fase de acumular ainda ou já tem uma reserva boa? 1) acumulando 2) tenho reserva"
-        elif estado == "objetivo":
-            return f"Perfeito, {nome}! O que te atrai mais: 1) crescer patrimônio 2) gerar renda extra 3) aposentadoria"
-        else:
-            return f"Entendi, {nome}! Que tal marcarmos um diagnóstico gratuito de 30 min? 1) sim 2) depois"
-            
-        except Exception as e:
-            logger.error("Erro na chamada OpenAI", error=str(e))
-            return None
-
-    def _get_emergency_fallback(self, context: PromptContext) -> str:
-        """Fallback emergencial com novo sistema"""
-        nome = context.nome_lead
-        estado = context.estado_atual
+        instrucao_base = f"O lead {nome_lead} não entendeu sua última pergunta sobre {session_state.estado_atual.value}."
         
-        if estado == "inicio":
-            return f"Oi {nome}! Sou Rafael, consultor da LDC Capital. Você tem interesse em investimentos? 1) sim 2) não"
-        elif estado == "situacao":  
-            return f"Legal, {nome}! Você já investe hoje ou está começando? 1) já invisto 2) começando"
-        elif estado == "patrimonio":
-            return f"Entendi, {nome}. Você está mais na fase de acumular ainda ou já tem uma reserva boa? 1) acumulando 2) tenho reserva"
-        elif estado == "objetivo":
-            return f"Perfeito, {nome}! O que te atrai mais: 1) crescer patrimônio 2) gerar renda extra 3) aposentadoria"
-        else:
-            return f"Entendi, {nome}! Que tal marcarmos um diagnóstico gratuito de 30 min? 1) sim 2) depois"
+        if tentativa == 1:
+            return f"{instrucao_base} Explique o mesmo ponto de uma forma diferente e mais simples. Mantenha a pergunta final."
+        else: # tentativa == 2
+            return f"{instrucao_base} Tente uma analogia ou um exemplo prático para explicar. Simplifique ao máximo e termine com uma pergunta de 'sim' ou 'não'."
 
-            return None
-    
     def _chamar_openai(self, prompt: str, estado: Estado, nome_lead: str) -> Optional[RespostaIA]:
         """Método auxiliar para chamadas simples"""
         
@@ -574,7 +544,7 @@ class AIConversationService:
             slots_faltantes=[],
             nome_lead=nome_lead,
             canal="whatsapp",
-            ultima_mensagem_lead="",
+            ultima_mensagem_lead=prompt,  # Usar o prompt como a "última mensagem" para reformulação
             historico_compacto=[]
         )
         

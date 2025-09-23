@@ -223,63 +223,9 @@ class ValidacaoResposta(BaseModel):
         self.valida = False
 
 
-class FewShotExample(BaseModel):
-    """Exemplo para few-shot learning"""
-    situacao: str
-    resposta_boa: str
-    resposta_ruim: str
-    explicacao: str
-
-
 # Constantes para configuração
 MAX_MENSAGENS_POR_CONVERSA = 8
 MAX_REFORMULACOES_POR_ESTADO = 2
 TEMPERATURA_IA = 0.3
 TOP_P_IA = 1.0
 TIMEOUT_IA_SEGUNDOS = 15
-
-# Few-shot examples por estado
-FEW_SHOTS_EXEMPLOS = {
-    Estado.SITUACAO: [
-        FewShotExample(
-            situacao='lead: "não sei bem"',
-            resposta_boa='show, {nome}. só pra eu te orientar melhor: 1) já investe hoje 2) está começando. 🙂',
-            resposta_ruim='descreva detalhadamente sua situação financeira atual.',
-            explicacao='Sempre oferecer opções numeradas simples'
-        ),
-        FewShotExample(
-            situacao='lead: "tenho um pouco investido"',
-            resposta_boa='legal, {nome}. entendi que já investe! vamos ver quanto você tem disponível então.',
-            resposta_ruim='quanto exatamente você tem investido em reais?',
-            explicacao='Confirmar entendimento antes de avançar'
-        )
-    ],
-    Estado.PATRIMONIO: [
-        FewShotExample(
-            situacao='lead: "tenho um pouco"',
-            resposta_boa='legal, {nome}. qual faixa fica mais perto. 1) até 100 mil 2) 100–500 mil 3) acima de 500 mil',
-            resposta_ruim='qual o valor exato do seu patrimônio total em reais.',
-            explicacao='Usar faixas ao invés de valores exatos'
-        ),
-        FewShotExample(
-            situacao='lead: "não sei bem quanto tenho"',
-            resposta_boa='sem problema, {nome}. é mais ou menos assim: 1) comecinho (até 100k) 2) médio (100-500k) 3) já bem (500k+)',
-            resposta_ruim='você precisa saber o valor exato para continuar',
-            explicacao='Reformular com linguagem simples'
-        )
-    ],
-    Estado.OBJETIVO: [
-        FewShotExample(
-            situacao='lead: "quero melhorar"',
-            resposta_boa='entendi. o que te atrai mais. 1) crescer ao longo dos anos 2) renda todo mês 3) aposentadoria 4) proteger o que tem',
-            resposta_ruim='quais são seus objetivos financeiros de curto, médio e longo prazo.',
-            explicacao='Opções claras e específicas'
-        ),
-        FewShotExample(
-            situacao='lead: "não sei o que quero"',
-            resposta_boa='normal, {nome}. imagina: você prefere 1) ver o dinheiro crescer bastante 2) receber uma renda extra 3) se aposentar bem?',
-            resposta_ruim='você deve definir objetivos claros primeiro',
-            explicacao='Dar exemplos concretos'
-        )
-    ]
-}
