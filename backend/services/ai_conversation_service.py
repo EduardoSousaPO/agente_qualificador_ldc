@@ -152,7 +152,7 @@ class AIConversationService:
         self,
         nome_lead: str,
         lead_canal: str,
-        mensagem_lead: str,
+        ultima_mensagem_lead: str,
         historico_conversa: List[Dict[str, str]],
         estado_atual: str,
         session_id: str = None
@@ -174,8 +174,8 @@ class AIConversationService:
                 return self._finalizar_por_limite_mensagens(session_state, nome_lead)
 
             # NOVO: Detectar se lead não compreendeu
-            if self._detectar_nao_compreensao(mensagem_lead):
-                return self._processar_reformulacao(session_state, mensagem_lead, nome_lead)
+            if self._detectar_nao_compreensao(ultima_mensagem_lead):
+                return self._processar_reformulacao(session_state, ultima_mensagem_lead, nome_lead)
 
             # NOVO: Verificar se a resposta gerada anteriormente causou loop
             # (isso previne que o sistema fique gerando mensagens de erro repetidas)
@@ -192,11 +192,11 @@ class AIConversationService:
 
             # Extrair slots da mensagem do lead
             session_state.contexto = self.slot_filling_service.extrair_slots_da_mensagem(
-                mensagem_lead, session_state.estado_atual, session_state.contexto
+                ultima_mensagem_lead, session_state.estado_atual, session_state.contexto
             )
 
             # Analisar intenção do lead
-            intencao = self.analisar_intencao_lead(mensagem_lead)
+            intencao = self.analisar_intencao_lead(ultima_mensagem_lead)
 
             # Determinar próxima ação baseada na intenção e slots
             proxima_acao, proximo_estado = self._determinar_proxima_acao(
@@ -205,7 +205,7 @@ class AIConversationService:
 
             # Gerar resposta usando IA
             resposta_ia = self._gerar_resposta_ia(
-                session_state, mensagem_lead, lead_canal, proxima_acao, proximo_estado, nome_lead
+                session_state, ultima_mensagem_lead, lead_canal, proxima_acao, proximo_estado, nome_lead
             )
 
             if not resposta_ia:
@@ -282,7 +282,7 @@ class AIConversationService:
         mensagem_lower = mensagem.lower().strip()
         return any(frase in mensagem_lower for frase in frases_nao_compreensao)
     
-    def _processar_reformulacao(self, session_state: SessionState, mensagem: str, 
+    def _processar_reformulacao(self, session_state: SessionState, ultima_mensagem_lead: str, 
                                nome_lead: str) -> Dict[str, Any]:
         """Processa reformulação quando lead não entende"""
         
