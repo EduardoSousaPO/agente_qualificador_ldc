@@ -272,115 +272,49 @@ Vamos começar? 😊"""
     def _processar_com_ia(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
         """Processa mensagem usando IA para conversação humanizada"""
         try:
-            # Buscar dados do lead
-            from backend.models.database_models import DatabaseConnection
-            db_conn = DatabaseConnection()
-            
-            # Log detalhado da consulta do lead
-            logger.info("Consultando lead no banco", lead_id=lead_id, lead_id_type=type(lead_id).__name__)
-            
-            lead_data = db_conn.get_client().table('leads').select('*').eq('id', lead_id).execute()
-            
-            # Log do resultado da consulta
-            logger.info("Resultado da consulta lead", 
-                       data_exists=bool(lead_data.data),
-                       data_count=len(lead_data.data) if lead_data.data else 0,
-                       raw_response_keys=list(lead_data.__dict__.keys()) if hasattr(lead_data, '__dict__') else [])
-            
-            if not lead_data.data:
-                logger.error("Lead não encontrado no banco", 
-                           lead_id=lead_id,
-                           consulta_executada=True,
-                           tabela="leads")
-                return {'success': False, 'error': 'Lead não encontrado'}
-            
-            lead = lead_data.data[0]
-            
-            # Log detalhado do lead encontrado
-            logger.info("Lead encontrado - dados completos", 
-                       lead_id=lead_id,
-                       lead_keys=list(lead.keys()),
-                       telefone_value=lead.get('telefone'),
-                       telefone_type=type(lead.get('telefone')).__name__,
-                       telefone_repr=repr(lead.get('telefone')),
-                       nome_value=lead.get('nome'))
-            
-            # Verificação de integridade do lead
-            if not self._verificar_integridade_lead(lead, lead_id):
-                return {'success': False, 'error': 'Lead com dados incompletos'}
-            
-            # Buscar histórico da conversa
+            # 1. Obter e validar dados do lead
+            lead = self._obter_e_validar_lead(lead_id)
+            if not lead:
+                return {'success': False, 'error': 'Lead inválido ou não encontrado'}
+
+            # 2. Buscar histórico da conversa
             historico = self._buscar_historico_conversa(sessao['id'])
             
-            # Gerar resposta com IA (incluindo session_id para fallbacks)
+            # 3. Gerar resposta com IA
             resposta_ia = self.ai_service.gerar_resposta_humanizada(
                 nome_lead=lead['nome'],
-                lead_canal=lead['canal'],
+                lead_canal=lead.get('canal', 'whatsapp'),
                 ultima_mensagem_lead=mensagem,
                 historico_conversa=historico,
                 estado_atual=sessao['estado'],
                 session_id=sessao['id']
             )
             
-            if not resposta_ia['success']:
+            if not resposta_ia.get('success', False):
+                logger.error("Falha ao gerar resposta da IA", lead_id=lead_id, detalhes=resposta_ia)
+                # Mesmo em falha da IA, pode haver uma resposta de fallback
+                if 'resposta' in resposta_ia:
+                    self.whatsapp_service.enviar_mensagem(lead['telefone'], resposta_ia['resposta'])
                 return resposta_ia
             
-            # Enviar resposta
-            telefone_lead = lead.get('telefone')
-            
-            # Log detalhado para debug
-            logger.info("Debug telefone lead", 
-                       lead_id=lead_id,
-                       telefone_lead=telefone_lead,
-                       lead_keys=list(lead.keys()) if lead else [],
-                       lead_data_sample={k: str(v)[:50] for k, v in lead.items() if k != 'id'} if lead else {})
-            
-            if not telefone_lead:
-                logger.error("Telefone do lead não encontrado", 
-                           lead_id=lead_id, 
-                           lead=lead,
-                           telefone_extraido=telefone_lead)
-                return {'success': False, 'error': 'Telefone do lead não encontrado'}
-            
+            # 4. Enviar resposta ao lead
             resultado_envio = self.whatsapp_service.enviar_mensagem(
-                telefone_lead,
+                lead['telefone'],
                 resposta_ia['resposta']
             )
             
-            if not resultado_envio['success']:
+            if not resultado_envio.get('success', False):
+                logger.error("Falha ao enviar mensagem via WhatsApp", lead_id=lead_id, detalhes=resultado_envio)
                 return {
                     'success': False,
-                    'error': 'Erro ao enviar resposta'
+                    'error': 'Erro ao enviar resposta via WhatsApp',
+                    'details': resultado_envio
                 }
             
-            # Registrar resposta enviada
+            # 5. Registrar e atualizar estado
             self._registrar_mensagem(sessao['id'], lead_id, resposta_ia['resposta'], 'enviada')
-            
-            # Atualizar estado da sessão se necessário
-            if resposta_ia.get('proximo_estado') != sessao['estado']:
-                contexto_atualizado = sessao.get('contexto', {})
-                contexto_atualizado.update(resposta_ia.get('contexto_atualizado', {}))
-                
-                self.session_repo.update_session(sessao['id'], {
-                    'estado': resposta_ia['proximo_estado'],
-                    'contexto': contexto_atualizado
-                })
-            
-            # Processar ações baseadas na resposta da IA
-            acao = resposta_ia.get('acao')
-            
-            if acao == 'agendar':
-                # Lead qualificado - marcar reunião
-                self._finalizar_qualificacao(sessao, lead_id, 85)  # Score alto para agendamento
-            
-            elif acao == 'educar':
-                # Lead não qualificado - enviar para nutrição
-                self._finalizar_qualificacao(sessao, lead_id, 45)  # Score médio para nutrição
-            
-            elif acao == 'finalizar':
-                # Finalizar com score baseado no progresso
-                score_final = self._calcular_score_progressivo(sessao, resposta_ia.get('score_parcial', 0))
-                self._finalizar_qualificacao(sessao, lead_id, score_final)
+            self._atualizar_estado_sessao(sessao, resposta_ia)
+            self._processar_acao_ia(sessao, lead_id, resposta_ia)
             
             return {
                 'success': True,
@@ -390,20 +324,62 @@ Vamos começar? 😊"""
             }
             
         except Exception as e:
-            logger.error("Erro ao processar com IA", error=str(e), lead_id=lead_id)
-            # Fallback para resposta padrão
-            mensagem_fallback = "Desculpe, tive um problema técnico. Pode me contar mais sobre sua situação financeira atual?"
+            logger.exception("Erro crítico ao processar com IA", lead_id=lead_id)
             
-            resultado_envio = self.whatsapp_service.enviar_mensagem(
-                telefone=lead.get('telefone', ''),
-                mensagem=mensagem_fallback
-            )
-            
+            # Tentar enviar um fallback final, se possível
+            try:
+                lead_fallback = self._obter_e_validar_lead(lead_id)
+                if lead_fallback and lead_fallback.get('telefone'):
+                    mensagem_fallback = "Desculpe, nosso sistema está enfrentando um problema técnico. Um de nossos consultores entrará em contato em breve."
+                    self.whatsapp_service.enviar_mensagem(lead_fallback['telefone'], mensagem_fallback)
+            except Exception as fallback_e:
+                logger.error("Falha ao enviar mensagem de fallback", lead_id=lead_id, fallback_error=str(fallback_e))
+
             return {
-                'success': True,
-                'resposta_enviada': mensagem_fallback,
-                'fallback': True
+                'success': False,
+                'error': str(e),
+                'fallback_sent': True
             }
+
+    def _obter_e_validar_lead(self, lead_id: str) -> Optional[Dict[str, Any]]:
+        """Busca e valida os dados essenciais de um lead."""
+        from backend.models.database_models import DatabaseConnection
+        db_conn = DatabaseConnection()
+        
+        lead_data = db_conn.get_client().table('leads').select('*').eq('id', lead_id).execute()
+        
+        if not lead_data.data:
+            logger.error("Lead não encontrado no banco de dados", lead_id=lead_id)
+            return None
+            
+        lead = lead_data.data[0]
+        
+        if not self._verificar_integridade_lead(lead, lead_id):
+            return None # A verificação de integridade já loga o erro
+            
+        return lead
+
+    def _atualizar_estado_sessao(self, sessao: Dict[str, Any], resposta_ia: Dict[str, Any]):
+        """Atualiza o estado e contexto da sessão com base na resposta da IA."""
+        if resposta_ia.get('proximo_estado') and resposta_ia.get('proximo_estado') != sessao.get('estado'):
+            contexto_atualizado = sessao.get('contexto', {})
+            contexto_atualizado.update(resposta_ia.get('contexto_atualizado', {}))
+            
+            self.session_repo.update_session(sessao['id'], {
+                'estado': resposta_ia['proximo_estado'],
+                'contexto': contexto_atualizado
+            })
+
+    def _processar_acao_ia(self, sessao: Dict[str, Any], lead_id: str, resposta_ia: Dict[str, Any]):
+        """Processa ações como agendar, educar ou finalizar com base na resposta da IA."""
+        acao = resposta_ia.get('acao')
+        if acao == 'agendar':
+            self._finalizar_qualificacao(sessao, lead_id, 85)
+        elif acao == 'educar':
+            self._finalizar_qualificacao(sessao, lead_id, 45)
+        elif acao == 'finalizar':
+            score_final = self._calcular_score_progressivo(sessao, resposta_ia.get('score_parcial', 0))
+            self._finalizar_qualificacao(sessao, lead_id, score_final)
     
     def _buscar_historico_conversa(self, session_id: str) -> List[Dict[str, str]]:
         """Busca o histórico de mensagens da conversa"""

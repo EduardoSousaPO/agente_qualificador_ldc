@@ -136,10 +136,12 @@ Qual sua preferência? 🎯
     def enviar_mensagem(self, telefone: str, mensagem: str, tentativa: int = 1) -> Dict[str, Any]:
         """Envia mensagem via WAHA com sistema de retentativas."""
         
+        # 1. Validação robusta de entrada
         if not telefone or not isinstance(telefone, str) or len(telefone) < 10:
             logger.error("🚨 ENVIO BLOQUEADO - Número de telefone inválido", 
                         telefone=repr(telefone), 
-                        mensagem_preview=mensagem[:50])
+                        tipo_telefone=type(telefone).__name__,
+                        mensagem_preview=mensagem[:50].replace("\n", " "))
             return {
                 'success': False,
                 'error': 'Número de telefone inválido',
@@ -154,9 +156,15 @@ Qual sua preferência? 🎯
             logger.info("Aguardando delay antes do envio", delay_segundos=delay, telefone=telefone)
             time.sleep(delay)
             
-            # Limpar e formatar telefone
-            telefone_limpo = self._limpar_telefone(telefone)
-            
+            # 2. Limpeza e formatação segura do telefone
+            try:
+                telefone_limpo = self._limpar_telefone(telefone)
+            except ValueError as e:
+                logger.error("🚨 ENVIO FALHOU - Erro na limpeza do telefone", 
+                            telefone_raw=telefone, 
+                            error=str(e))
+                return {'success': False, 'error': str(e)}
+
             payload = {
                 "chatId": f"{telefone_limpo}@c.us",
                 "text": mensagem,
