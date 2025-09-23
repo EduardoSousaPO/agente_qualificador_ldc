@@ -406,7 +406,6 @@ Vamos começar? 😊"""
             qualificacao = Qualificacao(
                 lead_id=lead_id,
                 session_id=sessao['id'],
-                status='concluida',
                 score_total=score,
                 patrimonio_resposta=contexto.get('patrimonio_range'),
                 objetivo_resposta=contexto.get('objetivo'),
