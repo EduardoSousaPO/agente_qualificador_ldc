@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import structlog
+import json
 
 from backend.models.database_models import Session, Message, Qualificacao, SystemLog
 from backend.services.scoring_service import ScoringService
@@ -400,12 +401,18 @@ Vamos começar? 😊"""
     def _finalizar_qualificacao(self, sessao: Dict[str, Any], lead_id: str, score: int):
         """Finaliza o processo de qualificação"""
         try:
+            contexto = sessao.get('contexto', {})
             # Criar registro de qualificação
             qualificacao = Qualificacao(
                 lead_id=lead_id,
                 session_id=sessao['id'],
-                respostas=sessao.get('contexto', {}),
-                status='concluida'
+                status='concluida',
+                score_total=score,
+                patrimonio_resposta=contexto.get('patrimonio_range'),
+                objetivo_resposta=contexto.get('objetivo'),
+                urgencia_resposta=contexto.get('urgencia'),
+                interesse_resposta=contexto.get('interesse'),
+                observacoes=json.dumps(contexto)
             )
             
             self.qualificacao_repo.create_qualificacao(qualificacao)
