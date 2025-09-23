@@ -27,6 +27,16 @@ from backend.models.conversation_models import (
 
 logger = structlog.get_logger(__name__)
 
+# NOVO: Definir o fluxo de qualificação explícito
+QUALIFICATION_FLOW = [
+    Estado.INICIO,
+    Estado.SITUACAO,
+    Estado.PATRIMONIO,
+    Estado.OBJETIVO,
+    Estado.URGENCIA,
+    Estado.INTERESSE,
+    Estado.AGENDAMENTO
+]
 
 class AIConversationService:
     """Serviço para conversação inteligente com IA melhorado"""
@@ -200,7 +210,7 @@ class AIConversationService:
 
             # Determinar próxima ação baseada na intenção e slots
             proxima_acao, proximo_estado = self._determinar_proxima_acao(
-                session_state, intencao
+                session_state, intencao, ultima_mensagem_lead
             )
 
             # Gerar resposta usando IA
@@ -333,29 +343,54 @@ class AIConversationService:
         # Fallback se reformulação falhar
         return self._gerar_fallback_response(session_state, nome_lead)
     
-    def _determinar_proxima_acao(self, session_state: SessionState, 
-                                intencao: IntencaoLead) -> Tuple[Acao, Estado]:
-        """Determina próxima ação baseada no estado atual e intenção"""
-        
-        # Se lead mostrou interesse em agendamento
+    def _lead_quer_agendar(self, mensagem: str, intencao: IntencaoLead) -> bool:
+        """NOVO: Lógica aprimorada para detectar intenção de agendamento."""
         if intencao.intencao == "agendamento":
+            return True
+            
+        palavras_chave_agendamento = [
+            "reunião", "diagnóstico", "conversar", "ajuda", 
+            "agendar", "marcar", "falar com especialista", "sim, tenho interesse"
+        ]
+        mensagem_lower = mensagem.lower()
+        return any(palavra in mensagem_lower for palavra in palavras_chave_agendamento)
+
+    def _determinar_proxima_acao(self, session_state: SessionState, 
+                                intencao: IntencaoLead, ultima_mensagem: str) -> Tuple[Acao, Estado]:
+        """
+        NOVO: Determina a próxima ação com base em um fluxo de qualificação rígido,
+        mas com flexibilidade para pular para o agendamento.
+        """
+        
+        # 1. Prioridade máxima: Lead quer agendar?
+        if self._lead_quer_agendar(ultima_mensagem, intencao):
+            logger.info("Intenção de agendamento detectada. Pulando para o estado de agendamento.",
+                         session_id=session_state.session_id)
             return Acao.AGENDAR, Estado.AGENDAMENTO
         
-        # Se lead recusou ou mostrou desinteresse
+        # 2. Se lead recusou ou mostrou desinteresse
         if intencao.intencao == "recusa" or intencao.sentimento == "negativo":
+            logger.info("Intenção de recusa detectada. Movendo para o estado de educar.",
+                         session_id=session_state.session_id)
             return Acao.FINALIZAR, Estado.EDUCAR
+            
+        # 3. Lógica de fluxo de qualificação sequencial
+        current_index = QUALIFICATION_FLOW.index(session_state.estado_atual)
         
-        # Se pode agendar baseado nos slots
-        if session_state.pode_agendar():
-            return Acao.AGENDAR, Estado.AGENDAMENTO
-        
-        # Continuar fluxo normal
-        proximo_estado = session_state.proximo_estado_logico()
-        
-        if proximo_estado == Estado.FINALIZADO:
-            return Acao.FINALIZAR, Estado.FINALIZADO
-        else:
+        # Se ainda não chegou ao fim do fluxo
+        if current_index < len(QUALIFICATION_FLOW) - 1:
+            # Avança para o próximo estado no fluxo definido
+            proximo_estado = QUALIFICATION_FLOW[current_index + 1]
+            logger.info("Avançando no fluxo de qualificação.",
+                         session_id=session_state.session_id,
+                         estado_atual=session_state.estado_atual.value,
+                         proximo_estado=proximo_estado.value)
             return Acao.CONTINUAR, proximo_estado
+        else:
+            # Se já passou por todas as etapas, o estado final é AGENDAMENTO ou FINALIZADO
+            logger.info("Fluxo de qualificação concluído. Movendo para o agendamento.",
+                         session_id=session_state.session_id)
+            return Acao.AGENDAR, Estado.AGENDAMENTO
     
     def _gerar_resposta_ia(self, session_state: SessionState, ultima_mensagem_lead: str,
                           lead_canal: str, acao: Acao, proximo_estado: Estado, nome_lead: str) -> Optional[RespostaIA]:
