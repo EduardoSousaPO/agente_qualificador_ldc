@@ -84,8 +84,8 @@ class GuardrailsService:
             if not self._tem_pergunta(mensagem):
                 erros.append("Ação 'continuar' deveria ter uma pergunta")
             
-            if not self._tem_opcoes_numeradas(mensagem):
-                erros.append("Deveria ter opções numeradas (2-3 opções)")
+            # if not self._tem_opcoes_numeradas(mensagem):
+            #     erros.append("Deveria ter opções numeradas (2-3 opções)")
         
         # 4. No máximo 1 emoji
         emoji_count = self._contar_emojis(mensagem)
