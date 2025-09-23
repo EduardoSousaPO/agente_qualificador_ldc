@@ -357,7 +357,7 @@ class AIConversationService:
         else:
             return Acao.CONTINUAR, proximo_estado
     
-    def _gerar_resposta_ia(self, session_state: SessionState, mensagem_lead: str,
+    def _gerar_resposta_ia(self, session_state: SessionState, ultima_mensagem_lead: str,
                           lead_canal: str, acao: Acao, proximo_estado: Estado, nome_lead: str) -> Optional[RespostaIA]:
         """Gera resposta usando IA com novo sistema de prompts"""
         
@@ -368,12 +368,12 @@ class AIConversationService:
             slots_faltantes=session_state.slots_faltantes(),
             nome_lead=nome_lead,
             canal=lead_canal,
-            ultima_mensagem_lead=mensagem_lead,
+            ultima_mensagem_lead=ultima_mensagem_lead,
             historico_compacto=[],  # Simplificado por ora
             tentativas_estado=self.tentativas_reformulacao.get(
                 f"{session_state.session_id}_{session_state.estado_atual}", 0
             ),
-            contexto_rag=self.rag_service.consultar_base_conhecimento(mensagem_lead)
+            contexto_rag=self.rag_service.consultar_base_conhecimento(ultima_mensagem_lead)
         )
         
         # Chamar OpenAI
