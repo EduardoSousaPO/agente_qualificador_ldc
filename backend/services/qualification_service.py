@@ -362,25 +362,30 @@ Vamos começar? 😊"""
 
     def _atualizar_estado_sessao(self, sessao: Dict[str, Any], resposta_ia: Dict[str, Any]):
         """Atualiza o estado e contexto da sessão com base na resposta da IA."""
-        if resposta_ia.get('proximo_estado') and resposta_ia.get('proximo_estado') != sessao.get('estado'):
+        proximo_estado = resposta_ia.get('proximo_estado')
+        estado_atual = sessao.get('estado')
+
+        if proximo_estado and proximo_estado != estado_atual:
             contexto_atualizado = sessao.get('contexto', {})
             contexto_atualizado.update(resposta_ia.get('contexto_atualizado', {}))
             
             self.session_repo.update_session(sessao['id'], {
-                'estado': resposta_ia['proximo_estado'],
+                'estado': proximo_estado,
                 'contexto': contexto_atualizado
             })
 
     def _processar_acao_ia(self, sessao: Dict[str, Any], lead_id: str, resposta_ia: Dict[str, Any]):
         """Processa ações como agendar, educar ou finalizar com base na resposta da IA."""
         acao = resposta_ia.get('acao')
+        
         if acao == 'agendar':
-            self._finalizar_qualificacao(sessao, lead_id, 85)
+            self._finalizar_qualificacao(sessao, lead_id, 'agendado')
         elif acao == 'educar':
-            self._finalizar_qualificacao(sessao, lead_id, 45)
+            self._finalizar_qualificacao(sessao, lead_id, 'educar')
         elif acao == 'finalizar':
-            score_final = self._calcular_score_progressivo(sessao, resposta_ia.get('score_parcial', 0))
-            self._finalizar_qualificacao(sessao, lead_id, score_final)
+            score_parcial = resposta_ia.get('score_parcial', 0)
+            score_final = self._calcular_score_progressivo(sessao, score_parcial)
+            self._finalizar_qualificacao(sessao, lead_id, 'finalizado', score_final)
     
     def _buscar_historico_conversa(self, session_id: str) -> List[Dict[str, str]]:
         """Busca o histórico de mensagens da conversa"""
@@ -398,36 +403,47 @@ Vamos começar? 😊"""
             logger.error("Erro ao buscar histórico", error=str(e))
             return []
     
-    def _finalizar_qualificacao(self, sessao: Dict[str, Any], lead_id: str, score: int):
-        """Finaliza o processo de qualificação"""
+    def _mapear_contexto_para_qualificacao(self, sessao: Dict[str, Any], score: int) -> Qualificacao:
+        """Cria um objeto Qualificacao a partir do contexto da sessão."""
+        contexto = sessao.get('contexto', {})
+        return Qualificacao(
+            lead_id=sessao['lead_id'],
+            session_id=sessao['id'],
+            score_total=score,
+            patrimonio_resposta=contexto.get('patrimonio_range'),
+            objetivo_resposta=contexto.get('objetivo'),
+            urgencia_resposta=contexto.get('urgencia'),
+            interesse_resposta=contexto.get('interesse'),
+            observacoes=json.dumps(contexto)
+        )
+
+    def _finalizar_qualificacao(self, sessao: Dict[str, Any], lead_id: str, status_final: str, score_base: int = 0):
+        """Finaliza o processo de qualificação, calcula o score e salva no banco."""
         try:
-            contexto = sessao.get('contexto', {})
-            # Criar registro de qualificação
-            qualificacao = Qualificacao(
-                lead_id=lead_id,
-                session_id=sessao['id'],
-                score_total=score,
-                patrimonio_resposta=contexto.get('patrimonio_range'),
-                objetivo_resposta=contexto.get('objetivo'),
-                urgencia_resposta=contexto.get('urgencia'),
-                interesse_resposta=contexto.get('interesse'),
-                observacoes=json.dumps(contexto)
-            )
-            
+            # 1. Definir score com base no status final
+            if status_final == 'agendado':
+                score = 85
+            elif status_final == 'educar':
+                score = 45
+            else: # 'finalizado'
+                score = self._calcular_score_progressivo(sessao, score_base)
+
+            # 2. Criar registro de qualificação usando o mapeador
+            qualificacao = self._mapear_contexto_para_qualificacao(sessao, score)
             self.qualificacao_repo.create_qualificacao(qualificacao)
             
-            # Atualizar score do lead
+            # 3. Atualizar score do lead
             from backend.models.database_models import DatabaseConnection
             db_conn = DatabaseConnection()
             db_conn.get_client().table('leads').update({'score': score}).eq('id', lead_id).execute()
             
-            # Enviar resultado para CRM automaticamente
+            # 4. Enviar resultado para CRM automaticamente
             self._enviar_resultado_crm_automatico(lead_id, score)
             
-            logger.info("Qualificação finalizada", lead_id=lead_id, score=score)
+            logger.info("Qualificação finalizada", lead_id=lead_id, score=score, status=status_final)
             
         except Exception as e:
-            logger.error("Erro ao finalizar qualificação", error=str(e))
+            logger.error("Erro ao finalizar qualificação", error=str(e), lead_id=lead_id)
     
     def _calcular_score_progressivo(self, sessao: Dict[str, Any], score_ia: int) -> int:
         """Calcula score baseado no progresso no funil SPIN"""
