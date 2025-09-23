@@ -792,7 +792,18 @@ Sucesso na sua jornada financeira! 💪
     
     def _processar_timeout_sessao(self, sessao: Dict[str, Any], lead_id: str) -> Dict[str, Any]:
         """Processa sessão que expirou por timeout"""
-        telefone = sessao['contexto'].get('telefone')
+        
+        # 1. Obter e validar dados do lead para garantir que temos o telefone
+        lead = self._obter_e_validar_lead(lead_id)
+        if not lead or not lead.get('telefone'):
+            logger.error("Não foi possível processar timeout - lead ou telefone inválido", 
+                       lead_id=lead_id, 
+                       session_id=sessao['id'])
+            # Desativar a sessão mesmo se o lead for inválido para evitar loops
+            self.session_repo.update_session(sessao['id'], {'ativa': False})
+            return {'success': False, 'error': 'Lead ou telefone inválido para mensagem de timeout'}
+
+        telefone = lead['telefone']
         
         # Enviar mensagem de timeout
         mensagem_timeout = self.whatsapp_service.gerar_mensagem_timeout()
