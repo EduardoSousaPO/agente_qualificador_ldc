@@ -114,7 +114,7 @@ Use as informações abaixo como base principal para responder à pergunta do le
         estado = context.estado_atual
         nome = context.nome_lead
         ultima_mensagem_lead = context.ultima_mensagem_lead
-        slots = context.slots
+        slots = context.slots_preenchidos
         
         # Estratégia específica por estado
         if estado == "saudacao":
