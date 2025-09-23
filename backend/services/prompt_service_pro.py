@@ -113,24 +113,24 @@ Use as informações abaixo como base principal para responder à pergunta do le
         
         estado = context.estado_atual
         nome = context.nome_lead
-        mensagem_lead = context.mensagem_lead
+        ultima_mensagem_lead = context.ultima_mensagem_lead
         slots = context.slots
         
         # Estratégia específica por estado
         if estado == "saudacao":
             return self._prompt_abertura(nome, getattr(context, 'canal', 'whatsapp'))
         elif estado == "qualificacao_patrimonio":
-            return self._prompt_descoberta_patrimonio(nome, mensagem_lead, slots)
+            return self._prompt_descoberta_patrimonio(nome, ultima_mensagem_lead, slots)
         elif estado == "qualificacao_objetivo":
-            return self._prompt_descoberta_objetivo(nome, mensagem_lead, slots)
+            return self._prompt_descoberta_objetivo(nome, ultima_mensagem_lead, slots)
         elif estado == "qualificacao_urgencia":
-            return self._prompt_criacao_urgencia(nome, mensagem_lead, slots)
+            return self._prompt_criacao_urgencia(nome, ultima_mensagem_lead, slots)
         elif estado == "qualificacao_interesse":
-            return self._prompt_validacao_interesse(nome, mensagem_lead, slots)
+            return self._prompt_validacao_interesse(nome, ultima_mensagem_lead, slots)
         elif estado == "agendamento":
-            return self._prompt_agendamento(nome, mensagem_lead, slots)
+            return self._prompt_agendamento(nome, ultima_mensagem_lead, slots)
         else:
-            return self._prompt_generico(nome, mensagem_lead, estado)
+            return self._prompt_generico(nome, ultima_mensagem_lead, estado)
     
     def _prompt_abertura(self, nome: str, canal: str) -> str:
         """Prompt para abertura consultiva"""
@@ -154,11 +154,11 @@ REGRAS:
 - Máximo 350 caracteres
 - Tom: consultivo, não robótico"""
 
-    def _prompt_descoberta_situacao(self, nome: str, mensagem_lead: str) -> str:
+    def _prompt_descoberta_situacao(self, nome: str, ultima_mensagem_lead: str) -> str:
         """Prompt para descobrir situação atual"""
         return f"""DESCOBERTA DA SITUAÇÃO:
 
-Lead {nome} respondeu: "{mensagem_lead}"
+Lead {nome} respondeu: "{ultima_mensagem_lead}"
 
 Estratégia: Baseado na resposta, faça uma pergunta mais específica para entender o contexto atual.
 
@@ -180,11 +180,11 @@ REGRAS:
 - 1 pergunta específica
 - Máximo 350 caracteres"""
 
-    def _prompt_descoberta_patrimonio(self, nome: str, mensagem_lead: str, slots) -> str:
+    def _prompt_descoberta_patrimonio(self, nome: str, ultima_mensagem_lead: str, slots) -> str:
         """Prompt sutil para descobrir patrimônio"""
         return f"""DESCOBERTA SUTIL DE PATRIMÔNIO:
 
-Lead {nome} respondeu: "{mensagem_lead}"
+Lead {nome} respondeu: "{ultima_mensagem_lead}"
 Contexto conhecido: {slots}
 
 Estratégia: NÃO pergunte "qual sua faixa". Seja mais consultivo e sutil.
@@ -203,11 +203,11 @@ REGRAS:
 - Baseie na resposta anterior
 - Máximo 350 caracteres"""
 
-    def _prompt_descoberta_objetivo(self, nome: str, mensagem_lead: str, slots) -> str:
+    def _prompt_descoberta_objetivo(self, nome: str, ultima_mensagem_lead: str, slots) -> str:
         """Prompt para descobrir objetivos reais"""
         return f"""DESCOBERTA DE OBJETIVOS:
 
-Lead {nome} respondeu: "{mensagem_lead}"
+Lead {nome} respondeu: "{ultima_mensagem_lead}"
 Contexto: {slots}
 
 Estratégia: Descubra a MOTIVAÇÃO real, não só o objetivo genérico.
@@ -226,11 +226,11 @@ REGRAS:
 - Inclua mini-caso se relevante
 - Máximo 350 caracteres"""
 
-    def _prompt_criacao_urgencia(self, nome: str, mensagem_lead: str, slots) -> str:
+    def _prompt_criacao_urgencia(self, nome: str, ultima_mensagem_lead: str, slots) -> str:
         """Prompt para criar urgência consultiva"""
         return f"""CRIAÇÃO DE URGÊNCIA:
 
-Lead {nome} respondeu: "{mensagem_lead}"
+Lead {nome} respondeu: "{ultima_mensagem_lead}"
 Perfil: {slots}
 
 Estratégia: Mostre o custo de não agir (implicação) + crie necessidade de diagnóstico.
@@ -254,11 +254,11 @@ REGRAS:
 - Ofereça diagnóstico, não venda
 - Máximo 350 caracteres"""
 
-    def _prompt_validacao_interesse(self, nome: str, mensagem_lead: str, slots) -> str:
+    def _prompt_validacao_interesse(self, nome: str, ultima_mensagem_lead: str, slots) -> str:
         """Prompt para validar interesse no diagnóstico"""
         return f"""VALIDAÇÃO DE INTERESSE:
 
-Lead {nome} respondeu: "{mensagem_lead}"
+Lead {nome} respondeu: "{ultima_mensagem_lead}"
 Perfil completo: {slots}
 
 Estratégia: Validar interesse usando benefícios específicos do diagnóstico.
@@ -280,11 +280,11 @@ REGRAS:
 - Trate objeções se houver
 - Máximo 350 caracteres"""
 
-    def _prompt_agendamento(self, nome: str, mensagem_lead: str, slots) -> str:
+    def _prompt_agendamento(self, nome: str, ultima_mensagem_lead: str, slots) -> str:
         """Prompt para agendamento consultivo"""
         return f"""AGENDAMENTO CONSULTIVO:
 
-Lead {nome} aceitou: "{mensagem_lead}"
+Lead {nome} aceitou: "{ultima_mensagem_lead}"
 Perfil: {slots}
 
 Estratégia: Agendar de forma consultiva e profissional.
@@ -308,12 +308,12 @@ REGRAS:
 - Ação sempre "agendar"
 - Máximo 350 caracteres"""
 
-    def _prompt_generico(self, nome: str, mensagem_lead: str, estado: str) -> str:
+    def _prompt_generico(self, nome: str, ultima_mensagem_lead: str, estado: str) -> str:
         """Prompt genérico para situações não mapeadas"""
         return f"""SITUAÇÃO GENÉRICA:
 
 Estado: {estado}
-Lead {nome} disse: "{mensagem_lead}"
+Lead {nome} disse: "{ultima_mensagem_lead}"
 
 Estratégia: Manter tom consultivo e avançar para próximo estado logicamente.
 
