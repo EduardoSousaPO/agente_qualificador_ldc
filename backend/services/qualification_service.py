@@ -404,7 +404,6 @@ Vamos começar? 😊"""
             qualificacao = Qualificacao(
                 lead_id=lead_id,
                 session_id=sessao['id'],
-                score=score,
                 respostas=sessao.get('contexto', {}),
                 status='concluida'
             )
