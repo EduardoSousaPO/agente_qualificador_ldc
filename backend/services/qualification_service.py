@@ -316,7 +316,7 @@ Vamos começar? 😊"""
             resposta_ia = self.ai_service.gerar_resposta_humanizada(
                 nome_lead=lead['nome'],
                 lead_canal=lead['canal'],
-                mensagem_lead=mensagem,
+                ultima_mensagem_lead=mensagem,
                 historico_conversa=historico,
                 estado_atual=sessao['estado'],
                 session_id=sessao['id']
