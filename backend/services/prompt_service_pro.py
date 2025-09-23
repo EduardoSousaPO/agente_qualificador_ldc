@@ -90,28 +90,44 @@ RESPONDA SEMPRE EM JSON: {"mensagem": "texto", "acao": "continuar/agendar/finali
             "risco": "Entendo a preocupação. Por isso trabalho com estratégias conservadoras também. No diagnóstico vemos exatamente qual nível de risco faz sentido para você."
         }
     
-    def build_contextualized_prompt(self, context: PromptContext) -> str:
-        """Constrói prompt contextualizado baseado no estado e perfil"""
+    def get_system_prompt(self, context: PromptContext) -> str:
+        """Constrói prompt do sistema contextualizado baseado no estado e perfil"""
+        base_prompt = self.system_prompt
+        
+        # Adiciona contexto RAG se disponível
+        if hasattr(context, 'contexto_rag') and context.contexto_rag and context.contexto_rag.strip():
+            rag_section = f"""
+
+## INFORMAÇÕES ADICIONAIS PARA CONSULTA (RAG)
+Use as informações abaixo como base principal para responder à pergunta do lead de forma precisa e persuasiva.
+---
+{context.contexto_rag}
+---
+"""
+            base_prompt += rag_section
+        
+        return base_prompt
+    
+    def get_user_prompt(self, context: PromptContext) -> str:
+        """Constrói prompt do usuário contextualizado baseado no estado e perfil"""
         
         estado = context.estado_atual
-        nome = context.nome_lead
-        mensagem_lead = context.ultima_mensagem_lead
-        slots = context.slots_preenchidos
+        nome = context.lead_nome
+        mensagem_lead = context.mensagem_lead
+        slots = context.slots
         
         # Estratégia específica por estado
-        if estado == Estado.INICIO:
-            return self._prompt_abertura(nome, context.canal)
-        elif estado == Estado.SITUACAO:
-            return self._prompt_descoberta_situacao(nome, mensagem_lead)
-        elif estado == Estado.PATRIMONIO:
+        if estado == "saudacao":
+            return self._prompt_abertura(nome, getattr(context, 'canal', 'whatsapp'))
+        elif estado == "qualificacao_patrimonio":
             return self._prompt_descoberta_patrimonio(nome, mensagem_lead, slots)
-        elif estado == Estado.OBJETIVO:
+        elif estado == "qualificacao_objetivo":
             return self._prompt_descoberta_objetivo(nome, mensagem_lead, slots)
-        elif estado == Estado.URGENCIA:
+        elif estado == "qualificacao_urgencia":
             return self._prompt_criacao_urgencia(nome, mensagem_lead, slots)
-        elif estado == Estado.INTERESSE:
+        elif estado == "qualificacao_interesse":
             return self._prompt_validacao_interesse(nome, mensagem_lead, slots)
-        elif estado == Estado.AGENDAMENTO:
+        elif estado == "agendamento":
             return self._prompt_agendamento(nome, mensagem_lead, slots)
         else:
             return self._prompt_generico(nome, mensagem_lead, estado)
@@ -164,7 +180,7 @@ REGRAS:
 - 1 pergunta específica
 - Máximo 350 caracteres"""
 
-    def _prompt_descoberta_patrimonio(self, nome: str, mensagem_lead: str, slots: Dict) -> str:
+    def _prompt_descoberta_patrimonio(self, nome: str, mensagem_lead: str, slots) -> str:
         """Prompt sutil para descobrir patrimônio"""
         return f"""DESCOBERTA SUTIL DE PATRIMÔNIO:
 
@@ -187,7 +203,7 @@ REGRAS:
 - Baseie na resposta anterior
 - Máximo 350 caracteres"""
 
-    def _prompt_descoberta_objetivo(self, nome: str, mensagem_lead: str, slots: Dict) -> str:
+    def _prompt_descoberta_objetivo(self, nome: str, mensagem_lead: str, slots) -> str:
         """Prompt para descobrir objetivos reais"""
         return f"""DESCOBERTA DE OBJETIVOS:
 
@@ -210,7 +226,7 @@ REGRAS:
 - Inclua mini-caso se relevante
 - Máximo 350 caracteres"""
 
-    def _prompt_criacao_urgencia(self, nome: str, mensagem_lead: str, slots: Dict) -> str:
+    def _prompt_criacao_urgencia(self, nome: str, mensagem_lead: str, slots) -> str:
         """Prompt para criar urgência consultiva"""
         return f"""CRIAÇÃO DE URGÊNCIA:
 
@@ -238,7 +254,7 @@ REGRAS:
 - Ofereça diagnóstico, não venda
 - Máximo 350 caracteres"""
 
-    def _prompt_validacao_interesse(self, nome: str, mensagem_lead: str, slots: Dict) -> str:
+    def _prompt_validacao_interesse(self, nome: str, mensagem_lead: str, slots) -> str:
         """Prompt para validar interesse no diagnóstico"""
         return f"""VALIDAÇÃO DE INTERESSE:
 
@@ -264,7 +280,7 @@ REGRAS:
 - Trate objeções se houver
 - Máximo 350 caracteres"""
 
-    def _prompt_agendamento(self, nome: str, mensagem_lead: str, slots: Dict) -> str:
+    def _prompt_agendamento(self, nome: str, mensagem_lead: str, slots) -> str:
         """Prompt para agendamento consultivo"""
         return f"""AGENDAMENTO CONSULTIVO:
 
@@ -292,7 +308,7 @@ REGRAS:
 - Ação sempre "agendar"
 - Máximo 350 caracteres"""
 
-    def _prompt_generico(self, nome: str, mensagem_lead: str, estado: Estado) -> str:
+    def _prompt_generico(self, nome: str, mensagem_lead: str, estado: str) -> str:
         """Prompt genérico para situações não mapeadas"""
         return f"""SITUAÇÃO GENÉRICA:
 
