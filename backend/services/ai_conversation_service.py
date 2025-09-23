@@ -384,8 +384,8 @@ class AIConversationService:
         
         try:
             # 🆕 USAR NOVO SISTEMA PROFISSIONAL - FORÇA SEMPRE
-            system_prompt = self.prompt_service_pro.system_prompt
-            user_prompt = self.prompt_service_pro.build_contextualized_prompt(context)
+            system_prompt = self.prompt_service_pro.get_system_prompt(context)
+            user_prompt = self.prompt_service_pro.get_user_prompt(context)
             
             # LOG DEBUG
             logger.info("🆕 Usando sistema profissional", 
