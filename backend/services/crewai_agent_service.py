@@ -6,20 +6,43 @@ a estrutura de Agentes e Tarefas do CrewAI para garantir um fluxo
 de conversa estruturado e robusto.
 """
 import os
+from typing import Any
 from crewai import Agent, Task, Crew, Process
 from langchain_openai import ChatOpenAI
 
+
 class CrewAIAgentService:
+    @staticmethod
+    def _sanitize_bool(value: Any, default: bool = False) -> bool:
+        """Normaliza entradas para booleanos aceitos pelo CrewAI."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "off"}:
+                return False
+            if normalized.isdigit():
+                return int(normalized) != 0
+        return default
+
     def __init__(self):
         """Inicializa o serviço do agente CrewAI."""
         # Configura o modelo de linguagem que será usado pelos agentes
         self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7)
 
+        # Normaliza flags de verbosidade para evitar valores inválidos no CrewAI
+        self._agent_verbose = self._sanitize_bool(os.getenv("CREW_AGENT_VERBOSE", "true"), default=True)
+        self._crew_verbose = self._sanitize_bool(os.getenv("CREW_VERBOSE", "true"), default=True)
+
     def processar_mensagem(self, session_id: str, nome_lead: str, historico_conversa: list, ultima_mensagem: str):
-        """
-        Processa uma mensagem de um lead usando uma equipe (Crew) do CrewAI.
-        """
-        
+        """Processa uma mensagem de um lead usando uma equipe (Crew) do CrewAI."""
+
         # 1. Definir o Agente
         # Este é o nosso especialista em qualificação.
         qualifier_agent = Agent(
@@ -31,7 +54,7 @@ class CrewAIAgentService:
                 "Você é profissional, valoriza o tempo do lead e não tem medo de fazer as perguntas importantes. "
                 "Seu objetivo final é agendar uma reunião apenas com os leads mais promissores."
             ),
-            verbose=True,
+            verbose=self._agent_verbose,
             llm=self.llm,
             allow_delegation=False
         )
@@ -58,7 +81,7 @@ class CrewAIAgentService:
             agents=[qualifier_agent],
             tasks=[task_qualificacao_inicial],
             process=Process.sequential,
-            verbose=2
+            verbose=self._crew_verbose
         )
 
         # 4. Iniciar o Trabalho
