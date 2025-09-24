@@ -34,9 +34,15 @@ class LangchainAgentService:
         """Inicializa o serviço do agente LangChain."""
         logger.info("Iniciando __init__ de LangchainAgentService...")
         
+        # NOVO: Validação explícita da chave da API OpenAI
+        api_key = os.getenv('OPENAI_API_KEY')
+        if not api_key:
+            logger.error("ERRO CRÍTICO: A variável de ambiente OPENAI_API_KEY não foi configurada no Render!")
+            raise ValueError("OPENAI_API_KEY não encontrada. Configure a variável de ambiente no Render.")
+
         try:
-            logger.info("Tentando inicializar ChatOpenAI...")
-            self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7)
+            logger.info("Tentando inicializar ChatOpenAI (chave API encontrada)...")
+            self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7, api_key=api_key)
             logger.info("ChatOpenAI inicializado com SUCESSO.")
         except Exception as e:
             logger.error("FALHA ao inicializar ChatOpenAI", error=str(e))
