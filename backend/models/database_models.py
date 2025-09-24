@@ -253,6 +253,23 @@ class SessionRepository:
             self.log_error(f"Erro ao buscar sessão recente: {str(e)}", {'lead_id': lead_id})
             return None
     
+    def get_sessions_by_lead_id(self, lead_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Busca sessoes de um lead ordenadas pela data mais recente."""
+        try:
+            query = (
+                self.db.table('sessions')
+                .select('*')
+                .eq('lead_id', lead_id)
+                .order('created_at', desc=True)
+            )
+            if limit is not None:
+                query = query.limit(limit)
+            result = query.execute()
+            return result.data or []
+        except Exception as e:
+            self.log_error(f"Erro ao buscar sessoes do lead: {str(e)}", {'lead_id': lead_id})
+            return []
+
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Busca uma sessão pelo ID"""
         try:
