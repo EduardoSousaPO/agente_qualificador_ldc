@@ -124,23 +124,6 @@ Use as informações abaixo como base principal para responder à pergunta do le
     
     def _prompt_abertura(self, nome: str, canal: str) -> str:
         """Prompt para abertura consultiva"""
-        
-        # NOVO: Lógica condicional baseada no nome
-        if nome == "Amigo(a)":
-            return f"""ABERTURA PARA NOME DESCONHECIDO:
-        
-Contexto: Primeiro contato com um lead de nome desconhecido via {canal}.
-        
-Estratégia: Apresentação profissional e coleta do nome do lead antes de prosseguir.
-
-Exemplo de abordagem:
-"Olá! Aqui é da LDC Capital, recebemos seu contato sobre investimentos. Antes de continuarmos, pode me dizer seu nome, por favor?"
-
-REGRAS:
-- Seja direto e profissional.
-- O objetivo principal é obter o nome para personalizar a conversa.
-- NÃO avance para a qualificação sem o nome."""
-
         return f"""ABERTURA DIRETA:
         
 Contexto: Primeiro contato com {nome} via {canal}.
@@ -148,7 +131,7 @@ Contexto: Primeiro contato com {nome} via {canal}.
 Estratégia: Apresentação rápida e primeira pergunta de qualificação para separar interessados de curiosos.
 
 Exemplo de abordagem:
-"{nome}, aqui é da LDC Capital. Recebi seu contato sobre investimentos.
+"Eduardo, aqui é da LDC Capital. Recebi seu contato sobre investimentos.
 
 Vamos direto ao ponto para não perder seu tempo: você já investe ativamente ou está apenas começando a pesquisar sobre o assunto?
 
