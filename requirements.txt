@@ -46,5 +46,10 @@ gunicorn
 langchain-text-splitters==0.0.1
 tiktoken==0.5.2
 
+# CrewAI - Framework de Agentes IA
+crewai==0.28.8
+crewai-tools==0.1.6
+langchain-openai==0.1.7
+
 
 
