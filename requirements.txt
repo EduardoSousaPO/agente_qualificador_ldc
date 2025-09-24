@@ -1,55 +1,47 @@
-# Agente Qualificador de Leads - Dependências
+# Agente Qualificador de Leads - Dependências Otimizadas
+# Versões atualizadas para compatibilidade total
+
 # Backend Flask
-Flask==3.0.0
-Flask-CORS==4.0.0
-python-dotenv==1.0.0
-requests==2.31.0
+Flask>=3.0.0
+Flask-CORS>=4.0.0
+python-dotenv>=1.0.0
+requests>=2.31.0
 
 # Banco de dados
-supabase==1.0.3
-psycopg2-binary==2.9.9
+supabase>=2.0.0
+psycopg2-binary>=2.9.9
 
-# APIs Externas
-google-auth==2.25.2
-google-auth-oauthlib==1.2.0
-google-auth-httplib2==0.2.0
-google-api-python-client==2.112.0
+# APIs Externas - Versões compatíveis com CrewAI
+google-auth>=2.25.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+google-api-python-client>=2.110.0
 openai>=1.13.3,<2.0.0
 
-# Processamento de dados (removido por não ser essencial e causar erros de build)
-# pandas==2.2.2
-# numpy==1.26.4
-
-# Utilitários
-schedule==1.2.0
-pytz==2023.3
-python-dateutil==2.8.2
-phonenumbers==8.13.26
-cachetools==5.3.2
-
-# Desenvolvimento e testes
-pytest>=8.0.0,<9.0.0
-pytest-cov==4.1.0
-black==23.12.0
-flake8==6.1.0
+# Utilitários essenciais
+schedule>=1.2.0
+pytz>=2023.3
+python-dateutil>=2.8.0
+phonenumbers>=8.13.0
+cachetools>=5.3.0
 
 # Logging e monitoramento
-structlog==23.2.0
+structlog>=23.2.0
 
 # Validação de dados
-pydantic==2.7.4
+pydantic>=2.5.0
 
 # Servidor web
-gunicorn
-
-# RAG e Processamento de Texto
-langchain-text-splitters==0.0.1
-tiktoken==0.5.2
+gunicorn>=21.0.0
 
 # CrewAI - Framework de Agentes IA
-crewai==0.28.8
-crewai-tools==0.1.6
-langchain-openai==0.1.7
+crewai>=0.28.8
+crewai-tools>=0.1.6
+langchain-openai>=0.1.7
 
+# RAG e Processamento de Texto (apenas o essencial)
+tiktoken>=0.5.0
 
-
+# Desenvolvimento (versões flexíveis)
+pytest>=8.0.0
+black>=23.0.0
