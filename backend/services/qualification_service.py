@@ -28,7 +28,19 @@ class QualificationService:
         self.ai_service = AIConversationService()
         
         self.timeout_sessao = int(os.getenv('TIMEOUT_SESSAO_MINUTOS', '60'))
-        
+        self.reset_session_minutes = int(os.getenv('RESET_SESSAO_MINUTOS', str(max(self.timeout_sessao * 3, 180))))
+        self.restart_keywords = [
+            'comecar do zero',
+            'comecar novamente',
+            'comecar de novo',
+            'reiniciar conversa',
+            'recomecar conversa',
+            'nova conversa',
+            'resetar conversa',
+            'podemos comecar do inicio',
+            'vamos comecar do inicio'
+        ]
+
         # Estados SPIN Selling - fluxo consultivo estruturado
         self.estados = [
             'inicio',        # Saudação + permissão para conversar
@@ -124,25 +136,41 @@ class QualificationService:
             
             # Buscar sessão ativa
             sessao = self.session_repo.get_active_session(lead_id)
-            
+
+            if sessao and self._deve_reiniciar_conversa(sessao, mensagem):
+                logger.info("Encerrando sessão ativa para reinício",
+                           lead_id=lead_id,
+                           session_id=sessao['id'],
+                           estado=sessao.get('estado'))
+                self._encerrar_sessao_para_reinicio(sessao, lead_id, motivo='reinicio_sessao_ativa')
+                sessao = None
+
             if not sessao:
                 # Verificar se há uma sessão criada recentemente (últimos 30 segundos)
                 # Isso previne condições de corrida quando o WAHA reenvia a mesma mensagem
                 sessao_recente = self.session_repo.get_recent_session(lead_id, 30)
-                
+
+                if sessao_recente and self._deve_reiniciar_conversa(sessao_recente, mensagem):
+                    logger.info("Sessão recente descartada para reinício",
+                               lead_id=lead_id,
+                               session_id=sessao_recente['id'],
+                               estado=sessao_recente.get('estado'))
+                    self._encerrar_sessao_para_reinicio(sessao_recente, lead_id, motivo='reinicio_sessao_recente')
+                    sessao_recente = None
+
                 if sessao_recente:
-                    logger.info("Sessão recente encontrada, reutilizando", 
-                               lead_id=lead_id, 
+                    logger.info("Sessão recente encontrada, reutilizando",
+                               lead_id=lead_id,
                                session_id=sessao_recente['id'],
                                session_age_seconds=30)
                     sessao = sessao_recente
-                    
+
                     # Ativar a sessão se não estiver ativa
                     if not sessao.get('ativa', False):
                         self.session_repo.update_session(sessao['id'], {'ativa': True})
                         sessao['ativa'] = True
                 else:
-                    logger.info("Nenhuma sessão encontrada, criando nova sessão", lead_id=lead_id)
+                    logger.info("Nenhuma sessão válida encontrada, criando nova sessão", lead_id=lead_id)
                     # Criar nova sessão automaticamente
                     nova_sessao = Session(
                         lead_id=lead_id,
@@ -151,16 +179,16 @@ class QualificationService:
                         ativa=True
                     )
                     sessao = self.session_repo.create_session(nova_sessao)
-                    
+
                     if not sessao:
                         logger.error("Erro ao criar nova sessão", lead_id=lead_id)
                         return {
                             'success': False,
                             'error': 'Erro ao criar sessão'
                         }
-                    
+
                     logger.info("Nova sessão criada", lead_id=lead_id, session_id=sessao['id'])
-            
+
             # Verificar timeout da sessão
             if self._verificar_timeout_sessao(sessao):
                 return self._processar_timeout_sessao(sessao, lead_id)
@@ -442,6 +470,11 @@ Vamos começar? 😊"""
             
             logger.info("Qualificação finalizada", lead_id=lead_id, score=score, status=status_final)
             
+            try:
+                self.ai_service.reset_session(sessao['id'])
+            except Exception as e:
+                logger.warning('Falha ao limpar cache da sessão ao finalizar', session_id=sessao.get('id'), lead_id=lead_id, error=str(e))
+
         except Exception as e:
             logger.error("Erro ao finalizar qualificação", error=str(e), lead_id=lead_id)
     
@@ -763,7 +796,12 @@ Sucesso na sua jornada financeira! 💪
                 'estado': 'finalizado',
                 'ativa': False
             })
-            
+
+            try:
+                self.ai_service.reset_session(sessao['id'])
+            except Exception as e:
+                logger.warning('Falha ao limpar cache da sessão após finalização', session_id=sessao['id'], lead_id=lead_id, error=str(e))
+
             return {
                 'success': True,
                 'message': 'Processo finalizado'
@@ -775,6 +813,69 @@ Sucesso na sua jornada financeira! 💪
                 'details': resultado_envio
             }
     
+    def _normalizar_texto(self, valor: Optional[str]) -> str:
+        if not valor:
+            return ""
+        try:
+            texto = unicodedata.normalize('NFKD', valor)
+            texto = texto.encode('ascii', 'ignore').decode('utf-8')
+        except Exception:
+            texto = valor
+        return texto.lower().strip()
+
+    def _lead_pediu_reinicio(self, mensagem: str) -> bool:
+        texto = self._normalizar_texto(mensagem)
+        if not texto:
+            return False
+        return any(chave in texto for chave in self.restart_keywords)
+
+    def _sessao_antiga(self, sessao: Dict[str, Any], minutos: int) -> bool:
+        if not sessao or minutos <= 0:
+            return False
+        referencia = sessao.get('updated_at') or sessao.get('created_at')
+        if not referencia:
+            return False
+        try:
+            marco = datetime.fromisoformat(referencia.replace('Z', '+00:00'))
+            agora = datetime.utcnow().replace(tzinfo=marco.tzinfo)
+            return (agora - marco) > timedelta(minutes=minutos)
+        except Exception:
+            return False
+
+    def _deve_reiniciar_conversa(self, sessao: Dict[str, Any], mensagem: str) -> bool:
+        if not sessao:
+            return False
+        estado = (sessao.get('estado') or '').lower()
+        if estado in {'finalizado', 'resultado', 'agendado', 'educar'}:
+            return True
+        if not sessao.get('ativa', True):
+            return True
+        if self._sessao_antiga(sessao, self.reset_session_minutes):
+            return True
+        if mensagem and self._lead_pediu_reinicio(mensagem):
+            return True
+        return False
+
+    def _encerrar_sessao_para_reinicio(self, sessao: Dict[str, Any], lead_id: str, motivo: str = ''):
+        if not sessao or not sessao.get('id'):
+            return
+        try:
+            self.session_repo.update_session(sessao['id'], {'ativa': False})
+        except Exception as e:
+            logger.warning("Falha ao atualizar sessão para reinício",
+                           session_id=sessao.get('id'),
+                           lead_id=lead_id,
+                           motivo=motivo,
+                           error=str(e))
+        try:
+            self.ai_service.reset_session(sessao.get('id'))
+        except Exception as e:
+            logger.warning("Falha ao limpar cache da sessão",
+                           session_id=sessao.get('id'),
+                           lead_id=lead_id,
+                           motivo=motivo,
+                           error=str(e))
+
     def _verificar_timeout_sessao(self, sessao: Dict[str, Any]) -> bool:
         """Verifica se a sessão expirou por timeout"""
         if not sessao.get('updated_at'):
@@ -814,7 +915,12 @@ Sucesso na sua jornada financeira! 💪
         
         # Desativar sessão
         self.session_repo.update_session(sessao['id'], {'ativa': False})
-        
+
+        try:
+            self.ai_service.reset_session(sessao['id'])
+        except Exception as e:
+            logger.warning('Falha ao limpar cache da sessão após timeout', session_id=sessao['id'], lead_id=lead_id, error=str(e))
+
         logger.info("Sessão finalizada por timeout", lead_id=lead_id, session_id=sessao['id'])
         
         return {
