@@ -20,9 +20,12 @@ from backend.models.database_models import (
 )
 from backend.services.scoring_service import ScoringService
 from backend.services.whatsapp_service import WhatsAppService
+# O qualification_service será substituído gradualmente
 from backend.services.qualification_service import QualificationService
 from backend.services.lead_detector import LeadDetectorService
 from backend.services.google_sheets_service import GoogleSheetsService
+# NOVO: Importar o serviço do agente CrewAI
+from backend.services.crewai_agent_service import CrewAIAgentService
 import time
 
 # 🔧 HOTFIX: Cache TTL robusto para deduplicação de mensagens WAHA
@@ -266,6 +269,8 @@ try:
     )
     google_sheets_service = GoogleSheetsService()
     lead_detector = LeadDetectorService(lead_repo, whatsapp_service, qualification_service)
+    # NOVO: Inicializar o serviço CrewAI
+    crewai_agent_service = CrewAIAgentService()
     
     logger.info("Serviços inicializados com sucesso")
 except Exception as e:
@@ -350,15 +355,38 @@ def webhook_whatsapp():
                 logger.error("Falha ao criar novo lead", telefone=telefone)
                 return jsonify({'status': 'error_creating_lead'}), 200
 
-        logger.info("Iniciando processamento da mensagem", lead_id=lead_data['id'])
+        logger.info("Iniciando processamento da mensagem com CrewAI", lead_id=lead_data['id'])
 
-        # Processar a mensagem com o serviço de qualificação
-        resultado = qualification_service.processar_mensagem_recebida(
-            lead_data['id'], mensagem
+        # Obter histórico da conversa para dar contexto ao CrewAI
+        sessoes = session_repo.get_sessions_by_lead_id(lead_data['id'])
+        historico_conversa = []
+        if sessoes:
+            mensagens = message_repo.get_session_messages(sessoes[0]['id'])
+            for msg in mensagens:
+                role = "user" if msg['tipo'] == 'recebida' else "assistant"
+                historico_conversa.append(f"{role}: {msg['conteudo']}")
+
+        # Processar a mensagem com o serviço CrewAI
+        resposta_crewai = crewai_agent_service.processar_mensagem(
+            session_id=lead_data['id'], # Usar lead_id como session_id
+            nome_lead=nome_contato,
+            historico_conversa=historico_conversa,
+            ultima_mensagem=mensagem
         )
+
+        # Enviar a resposta e registrar as mensagens
+        if resposta_crewai:
+            whatsapp_service.enviar_mensagem(telefone, resposta_crewai)
+            # Salvar mensagem recebida
+            message_repo.create_message(Message(lead_id=lead_data['id'], session_id=sessoes[0]['id'] if sessoes else None, conteudo=mensagem, tipo='recebida'))
+            # Salvar mensagem enviada
+            message_repo.create_message(Message(lead_id=lead_data['id'], session_id=sessoes[0]['id'] if sessoes else None, conteudo=resposta_crewai, tipo='enviada'))
+            resultado = {'success': True, 'resposta': resposta_crewai, 'source': 'crewai'}
+        else:
+            resultado = {'success': False, 'error': 'CrewAI não retornou uma resposta.'}
         
         if resultado.get('success', False):
-            logger.info("Mensagem processada com sucesso", lead_id=lead_data['id'], resultado=resultado)
+            logger.info("Mensagem processada com sucesso via CrewAI", lead_id=lead_data['id'], resultado=resultado)
         else:
             logger.error("Erro ao processar mensagem", lead_id=lead_data['id'], error=resultado.get('error'))
         
