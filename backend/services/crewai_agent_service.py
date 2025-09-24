@@ -108,12 +108,15 @@ class CrewAIAgentService:
         """Monta a descrição dinâmica da tarefa para o Crew."""
         historico_relevante = "\n".join(historico_conversa[-6:]) if historico_conversa else "Sem mensagens anteriores registradas."
 
-        checklist = """CHECKLIST OBRIGATÓRIO
-1. Soe humano: 1 ou 2 frases naturais, sem copiar texto corporativo. Varie o vocabulário e demonstre escuta ativa.
-2. Identifique pelo histórico quais etapas do funil (situação, objetivo, patrimônio, experiência/perfil, urgência, interesse) já foram respondidas. Pergunte somente sobre a próxima lacuna; nunca empilhe vários temas na mesma mensagem.
-3. Use o contexto RAG apenas quando trouxer valor direto para a pergunta ou dúvida do lead (dados, cases, argumentos). Mantenha a resposta objetiva.
-4. Quando houver fit, convide para a Reunião R1 (30 min, diagnóstico gratuito com especialista CVM). Se aceitar, confirme formato/horário e explique que, havendo aderência, ocorre uma R2 com plano personalizado.
-5. Mantenha a mensagem curta (até ~320 caracteres) e finalize com uma única pergunta ou call-to-action clara."""
+        checklist = """CHECKLIST OBRIGATORIO
+1. Soe humano em 1 ou 2 frases curtas. Use expressoes naturais, reconheca a resposta do lead e varie o vocabulario.
+2. Consulte o historico para identificar o que ja foi respondido. Pergunte apenas sobre a proxima lacuna; nunca repita perguntas equivalentes.
+3. Faça perguntas objetivas e, quando fizer sentido, ofereca 2 ou 3 opcoes de resposta curtas para facilitar.
+4. Descubra onde o lead investe hoje, se tem assessor e como avalia esse atendimento. Puxe dores comuns (pouco contato, taxa alta, carteira engessada) sem soar agressivo.
+5. Use o contexto RAG somente para complementar com cases, diferenciais da LDC e beneficios da R1/R2 (diagnostico gratuito com especialista CVM, estudo profundo, independencia dos bancos).
+6. Limite cada mensagem a ate ~280 caracteres e encerre sempre com uma unica pergunta ou call-to-action direta.
+7. Ao final, descreva em duas frases a Reuniao R1 (30 min, diagnostico gratuito, mapa de oportunidades) e convide para um horario especifico; se aceitar, confirme formato e mencione a possivel R2."""
+
 
         descricao = f"""Você está em uma conversa com o lead {nome_lead}. Utilize um tom consultivo, seguro e objetivo para conduzir o funil de qualificação comercial da LDC Capital.
 
@@ -125,13 +128,15 @@ Histórico recente (do mais antigo para o mais novo):
 
 {checklist}
 
-Fluxo sugerido (siga na ordem, perguntando um item por vez):
-- Situação atual/experiência prévia com investimentos
-- Objetivo principal
-- Patrimônio disponível
-- Experiência/perfil de risco
-- Urgência (quando pretende agir)
-- Interesse/aceite para a Reunião R1
+Fluxo sugerido (siga na ordem, uma etapa por mensagem):
+- Que momento voce esta? (experiencia atual, plataformas/corretoras usadas)
+- Voce conta com algum assessor hoje? Como avalia o atendimento?
+- Objetivo principal (crescer patrimonio, renda, aposentadoria etc.)
+- Patrimonio disponivel para investir agora
+- Nivel de risco/experiencia (conservador, moderado, agressivo)
+- Urgencia: quando pretende ajustar ou investir
+- Dores especificas percebidas (taxas, resultados, falta de acompanhamento)
+- Interesse e convite para a R1
 
 Se o lead trouxer dúvida ou objeção, responda de forma breve antes de seguir para a próxima etapa.
 """
@@ -193,7 +198,7 @@ Entrega final esperada: uma única resposta em texto natural pronto para ser env
 
         task_qualificacao_inicial = Task(
             description=task_description,
-            expected_output="Resposta curta (até 320 caracteres), consultiva e objetiva, pronta para enviar.",
+            expected_output="Resposta humana, consultiva e direta, com ate 280 caracteres e encerrada em pergunta ou CTA.",
             agent=qualifier_agent,
         )
 
