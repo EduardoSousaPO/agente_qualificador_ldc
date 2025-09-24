@@ -88,8 +88,8 @@ def _parse_waha_payload(data: dict) -> ParsedWahaPayload:
     if nome_bruto and str(nome_bruto).strip():
         nome_final = str(nome_bruto).strip().split()[0].capitalize()
     else:
-        # Fallback CRÍTICO: se não houver nome, usa o número para evitar erros
-        nome_final = telefone
+        # Fallback CRÍTICO: se não houver nome, usa um placeholder que a IA possa entender.
+        nome_final = "Amigo(a)"
 
     return ParsedWahaPayload(
         telefone=telefone,
