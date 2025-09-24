@@ -6,6 +6,7 @@ utilizando as abstrações do LangChain para gerenciar estado, memória,
 ferramentas e a interação com a LLM.
 """
 import os
+import structlog
 from langchain_openai import ChatOpenAI
 from langchain.prompts import (
     ChatPromptTemplate,
@@ -26,11 +27,21 @@ def get_memory_for_session(session_id: str) -> ConversationBufferMemory:
         MEMORIES[session_id] = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
     return MEMORIES[session_id]
 
+logger = structlog.get_logger(__name__)
 
 class LangchainAgentService:
     def __init__(self):
         """Inicializa o serviço do agente LangChain."""
-        self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7)
+        logger.info("Iniciando __init__ de LangchainAgentService...")
+        
+        try:
+            logger.info("Tentando inicializar ChatOpenAI...")
+            self.llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7)
+            logger.info("ChatOpenAI inicializado com SUCESSO.")
+        except Exception as e:
+            logger.error("FALHA ao inicializar ChatOpenAI", error=str(e))
+            # Propagar o erro para que a inicialização geral no app.py possa capturá-lo
+            raise e
 
     def _get_system_prompt_template(self, nome_lead: str) -> str:
         """Retorna o template do prompt de sistema com base no nome do lead."""
