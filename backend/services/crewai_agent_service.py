@@ -109,11 +109,11 @@ class CrewAIAgentService:
         historico_relevante = "\n".join(historico_conversa[-6:]) if historico_conversa else "Sem mensagens anteriores registradas."
 
         checklist = """CHECKLIST OBRIGATÓRIO
-1. Reforce em poucas palavras a proposta de valor da LDC Capital usando as informações disponíveis (diagnóstico R1 gratuito conduzido por especialista CVM; se houver aderência, antecipe que existe uma possível R2 com estudo personalizado).
-2. Siga rigorosamente a ordem de etapas: situação geral -> objetivo principal -> patrimônio disponível -> experiência/perfil de risco -> urgência -> interesse -> convite/agendamento da R1. Nunca pule para urgência antes de confirmar o objetivo.
-3. Explore os dados do histórico da conversa e do contexto RAG para gerar autoridade, cases, diferenciais ou respostas objetivas.
-4. Ao oferecer a reunião, deixe claro que é a Reunião R1 (30 minutos, diagnóstico gratuito). Depois que o lead aceitar, confirme formato (virtual/presencial) e mencione que, se houver fit, a equipe agenda a R2.
-5. Termine cada mensagem com uma pergunta ou call-to-action clara e direta para avançar a etapa."""
+1. Soe humano: 1 ou 2 frases naturais, sem copiar texto corporativo. Varie o vocabulário e demonstre escuta ativa.
+2. Identifique pelo histórico quais etapas do funil (situação, objetivo, patrimônio, experiência/perfil, urgência, interesse) já foram respondidas. Pergunte somente sobre a próxima lacuna; nunca empilhe vários temas na mesma mensagem.
+3. Use o contexto RAG apenas quando trouxer valor direto para a pergunta ou dúvida do lead (dados, cases, argumentos). Mantenha a resposta objetiva.
+4. Quando houver fit, convide para a Reunião R1 (30 min, diagnóstico gratuito com especialista CVM). Se aceitar, confirme formato/horário e explique que, havendo aderência, ocorre uma R2 com plano personalizado.
+5. Mantenha a mensagem curta (até ~320 caracteres) e finalize com uma única pergunta ou call-to-action clara."""
 
         descricao = f"""Você está em uma conversa com o lead {nome_lead}. Utilize um tom consultivo, seguro e objetivo para conduzir o funil de qualificação comercial da LDC Capital.
 
@@ -124,6 +124,16 @@ Histórico recente (do mais antigo para o mais novo):
 {historico_relevante}
 
 {checklist}
+
+Fluxo sugerido (siga na ordem, perguntando um item por vez):
+- Situação atual/experiência prévia com investimentos
+- Objetivo principal
+- Patrimônio disponível
+- Experiência/perfil de risco
+- Urgência (quando pretende agir)
+- Interesse/aceite para a Reunião R1
+
+Se o lead trouxer dúvida ou objeção, responda de forma breve antes de seguir para a próxima etapa.
 """
 
         if rag_context:
@@ -183,7 +193,7 @@ Entrega final esperada: uma única resposta em texto natural pronto para ser env
 
         task_qualificacao_inicial = Task(
             description=task_description,
-            expected_output="Resposta única em texto curto, consultivo e objetivo, pronta para enviar.",
+            expected_output="Resposta curta (até 320 caracteres), consultiva e objetiva, pronta para enviar.",
             agent=qualifier_agent,
         )
 
