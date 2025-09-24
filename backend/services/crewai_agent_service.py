@@ -109,24 +109,14 @@ class CrewAIAgentService:
         historico_relevante = "\n".join(historico_conversa[-6:]) if historico_conversa else "Sem mensagens anteriores registradas."
 
         checklist = """CHECKLIST OBRIGATORIO
-1. Soe humano em 1 ou 2 frases curtas. Use expressoes naturais, reconheca a resposta do lead e varie o vocabulario.
-2. Consulte o historico para identificar o que ja foi respondido. Pergunte apenas sobre a proxima lacuna; nunca repita perguntas equivalentes.
-3. Faça perguntas objetivas e, quando fizer sentido, ofereca 2 ou 3 opcoes de resposta curtas para facilitar.
-4. Descubra onde o lead investe hoje, se tem assessor e como avalia esse atendimento. Puxe dores comuns (pouco contato, taxa alta, carteira engessada) sem soar agressivo.
-5. Use o contexto RAG somente para complementar com cases, diferenciais da LDC e beneficios da R1/R2 (diagnostico gratuito com especialista CVM, estudo profundo, independencia dos bancos).
-6. Limite cada mensagem a ate ~280 caracteres e encerre sempre com uma unica pergunta ou call-to-action direta.
-7. Ao final, descreva em duas frases a Reuniao R1 (30 min, diagnostico gratuito, mapa de oportunidades) e convide para um horario especifico; se aceitar, confirme formato e mencione a possivel R2."""
-
-
-        descricao = f"""Você está em uma conversa com o lead {nome_lead}. Utilize um tom consultivo, seguro e objetivo para conduzir o funil de qualificação comercial da LDC Capital.
-
-Identificador da sessão: {session_id}
-Última mensagem recebida do lead: '{ultima_mensagem}'
-
-Histórico recente (do mais antigo para o mais novo):
-{historico_relevante}
-
-{checklist}
+1. Quando historico estiver vazio ou o lead pedir recomeço, cumprimente de forma natural e apresente a LDC: consultoria independente do interior do RS, sem conflitos de interesse, multi-custodia (XP, BTG, Avenue) e processo R1/R2 estruturado.
+2. Use linguagem humana, direta e variada. Evite frases mecanicas como 'estou aqui para ajudar' ou 'vou te ajudar'. Mostre que ouviu a resposta antes de seguir.
+3. Consulte o historico: pergunte apenas sobre o proximo ponto em aberto. Nunca faça mais de uma pergunta por mensagem.
+4. Quando fizer sentido, ofereça 2 ou 3 opcoes de resposta curtas (ex.: 'invisto sozinho / tenho assessor / ninguém cuida') para dar ritmo.
+5. Descubra onde o lead investe hoje, se tem assessor, quanto confia nesse atendimento e quais dores percebe (taxas, proatividade, carteira engessada). Depois avance para objetivo, patrimonio, risco, urgencia e interesse.
+6. Use o contexto RAG para embasar: diagnostico R1 gratuito com especialista CVM, estudo profundo na R2, modelo fee-based com cashback, independência e valores do interior, cases dos materiais.
+7. Limite a mensagem a ate ~260 caracteres e finalize sempre com uma unica pergunta ou CTA clara.
+8. Ao convidar para a R1, explique em duas frases que é um diagnóstico de 30 minutos sem conflito, mostra mapa de oportunidades e abre caminho para a R2. Sugira horarios concretos e confirme formato (virtual/presencial)."""
 
 Fluxo sugerido (siga na ordem, uma etapa por mensagem):
 - Que momento voce esta? (experiencia atual, plataformas/corretoras usadas)
