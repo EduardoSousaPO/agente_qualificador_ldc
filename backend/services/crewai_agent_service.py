@@ -31,6 +31,51 @@ class CrewAIAgentService:
                 return int(normalized) != 0
         return default
 
+    @staticmethod
+    def _extract_response_text(output: Any) -> str:
+        """Converte o resultado do CrewAI em texto simples."""
+
+        def _coerce(value: Any, depth: int = 0) -> str | None:
+            if depth > 5:
+                return None
+            if value is None:
+                return None
+            if isinstance(value, str):
+                return value
+            if isinstance(value, (list, tuple)):
+                for item in value:
+                    coerced = _coerce(item, depth + 1)
+                    if coerced:
+                        return coerced
+                return None
+            if isinstance(value, dict):
+                for key in ("final_output", "output", "raw", "response", "text", "content"):
+                    if key in value:
+                        coerced = _coerce(value[key], depth + 1)
+                        if coerced:
+                            return coerced
+                return None
+            if hasattr(value, "get"):
+                try:
+                    for key in ("final_output", "output", "raw", "response", "text", "content"):
+                        coerced = _coerce(value.get(key), depth + 1)
+                        if coerced:
+                            return coerced
+                except Exception:
+                    pass
+            for key in ("final_output", "output", "raw", "response", "text", "content"):
+                if hasattr(value, key):
+                    coerced = _coerce(getattr(value, key), depth + 1)
+                    if coerced:
+                        return coerced
+            try:
+                return str(value)
+            except Exception:
+                return None
+
+        texto = _coerce(output)
+        return texto.strip() if texto else ""
+
     def __init__(self):
         """Inicializa o serviço do agente CrewAI."""
         # Configura o modelo de linguagem que será usado pelos agentes
@@ -88,4 +133,5 @@ class CrewAIAgentService:
         # O método kickoff inicia a execução das tarefas pela equipe.
         resposta = qualificacao_crew.kickoff()
 
-        return resposta
+        return self._extract_response_text(resposta)
+

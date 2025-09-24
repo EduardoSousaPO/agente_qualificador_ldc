@@ -135,7 +135,11 @@ Qual sua preferência? 🎯
     
     def enviar_mensagem(self, telefone: str, mensagem: str, tentativa: int = 1) -> Dict[str, Any]:
         """Envia mensagem via WAHA com sistema de retentativas."""
-        
+
+        # Normaliza mensagem para string simples
+        if not isinstance(mensagem, str):
+            mensagem = "" if mensagem is None else str(mensagem)
+
         # 1. Validação robusta de entrada
         if not telefone or not isinstance(telefone, str) or len(telefone) < 10:
             logger.error("🚨 ENVIO BLOQUEADO - Número de telefone inválido", 
@@ -340,6 +344,9 @@ Mande qualquer mensagem para reativar nosso chat! 😊
 
     def _simular_envio_sucesso(self, telefone: str, mensagem: str) -> Dict[str, Any]:
         """Simula envio bem-sucedido quando WAHA não está disponível"""
+        if not isinstance(mensagem, str):
+            mensagem = "" if mensagem is None else str(mensagem)
+
         logger.warning("🚨 SIMULANDO ENVIO - WAHA indisponível", 
                       telefone=telefone,
                       mensagem_preview=mensagem[:50])
