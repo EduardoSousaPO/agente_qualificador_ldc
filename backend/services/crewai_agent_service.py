@@ -7,8 +7,13 @@ de conversa estruturado e robusto.
 """
 import os
 from typing import Any
+import structlog
 from crewai import Agent, Task, Crew, Process
 from langchain_openai import ChatOpenAI
+
+from backend.services.rag_service import RAGService
+
+logger = structlog.get_logger(__name__)
 
 
 class CrewAIAgentService:
@@ -85,53 +90,112 @@ class CrewAIAgentService:
         self._agent_verbose = self._sanitize_bool(os.getenv("CREW_AGENT_VERBOSE", "true"), default=True)
         self._crew_verbose = self._sanitize_bool(os.getenv("CREW_VERBOSE", "true"), default=True)
 
-    def processar_mensagem(self, session_id: str, nome_lead: str, historico_conversa: list, ultima_mensagem: str):
+        # Serviço opcional de RAG para reforçar argumentação consultiva
+        self.rag_service = None
+        try:
+            self.rag_service = RAGService()
+        except Exception as exc:  # pragma: no cover - fallback defensivo
+            logger.warning("RAGService indisponível, seguindo sem contexto adicional", error=str(exc))
+
+    def _build_task_description(
+        self,
+        session_id: str,
+        nome_lead: str,
+        historico_conversa: list[str],
+        ultima_mensagem: str,
+        rag_context: str,
+    ) -> str:
+        """Monta a descrição dinâmica da tarefa para o Crew."""
+        historico_relevante = "
+".join(historico_conversa[-6:]) if historico_conversa else "Sem mensagens anteriores registradas."
+
+        checklist = """CHECKLIST OBRIGATÓRIO
+1. Reforce em poucas palavras a proposta de valor da LDC Capital usando as informações disponíveis (diagnóstico R1 gratuito conduzido por especialista CVM; se houver aderência, antecipe que existe uma possível R2 com estudo personalizado).
+2. Siga rigorosamente a ordem de etapas: situação geral -> objetivo principal -> patrimônio disponível -> experiência/perfil de risco -> urgência -> interesse -> convite/agendamento da R1. Nunca pule para urgência antes de confirmar o objetivo.
+3. Explore os dados do histórico da conversa e do contexto RAG para gerar autoridade, cases, diferenciais ou respostas objetivas.
+4. Ao oferecer a reunião, deixe claro que é a Reunião R1 (30 minutos, diagnóstico gratuito). Depois que o lead aceitar, confirme formato (virtual/presencial) e mencione que, se houver fit, a equipe agenda a R2.
+5. Termine cada mensagem com uma pergunta ou call-to-action clara e direta para avançar a etapa."""
+
+        descricao = f"""Você está em uma conversa com o lead {nome_lead}. Utilize um tom consultivo, seguro e objetivo para conduzir o funil de qualificação comercial da LDC Capital.
+
+Identificador da sessão: {session_id}
+Última mensagem recebida do lead: '{ultima_mensagem}'
+
+Histórico recente (do mais antigo para o mais novo):
+{historico_relevante}
+
+{checklist}
+"""
+
+        if rag_context:
+            descricao += f"""
+Contexto estratégico da base de conhecimento LDC (use apenas o que fizer sentido na conversa):
+{rag_context.strip()}
+"""
+
+        descricao += """
+Entrega final esperada: uma única resposta em texto natural pronto para ser enviado no WhatsApp, seguindo o fluxo descrito."""
+
+        return descricao
+
+    def processar_mensagem(
+        self,
+        session_id: str,
+        nome_lead: str,
+        historico_conversa: list,
+        ultima_mensagem: str,
+    ) -> str:
         """Processa uma mensagem de um lead usando uma equipe (Crew) do CrewAI."""
 
+        # Tenta coletar contexto adicional via RAG
+        rag_context = ""
+        if self.rag_service:
+            try:
+                consulta = " | ".join([msg for msg in historico_conversa[-5:] if msg])
+                consulta = f"{consulta} | {ultima_mensagem}" if consulta else ultima_mensagem
+                rag_context = self.rag_service.consultar_base_conhecimento(consulta)
+            except Exception as exc:  # pragma: no cover - fallback defensivo
+                logger.warning("Falha ao recuperar contexto RAG", error=str(exc))
+                rag_context = ""
+
         # 1. Definir o Agente
-        # Este é o nosso especialista em qualificação.
         qualifier_agent = Agent(
-            role='Especialista em Qualificação de Leads da LDC Capital',
-            goal=f'Qualificar o lead chamado {nome_lead} para um diagnóstico de investimentos, seguindo um funil de perguntas estruturado.',
+            role="Especialista em Qualificação de Leads da LDC Capital",
+            goal=f"Conduzir {nome_lead} por um funil consultivo até o agendamento da Reunião R1 com critérios claros.",
             backstory=(
                 "Você é um consultor de investimentos sênior da LDC Capital. "
-                "Sua especialidade é identificar rapidamente o potencial de um novo lead através de perguntas precisas e diretas. "
-                "Você é profissional, valoriza o tempo do lead e não tem medo de fazer as perguntas importantes. "
-                "Seu objetivo final é agendar uma reunião apenas com os leads mais promissores."
+                "Sua especialidade é identificar rapidamente o potencial de um lead através de perguntas estruturadas, "
+                "usando dados exclusivos e conhecimento do mercado. "
+                "Você valoriza seu tempo e o tempo do lead, e só avança com quem demonstra fit verdadeiro."
             ),
             verbose=self._agent_verbose,
             llm=self.llm,
-            allow_delegation=False
+            allow_delegation=False,
         )
 
-        # 2. Definir as Tarefas
-        # Por enquanto, criaremos uma tarefa inicial para a PoC.
-        # O contexto da conversa é passado aqui.
+        # 2. Definir a Tarefa com checklist e contexto dinâmico
+        task_description = self._build_task_description(
+            session_id=session_id,
+            nome_lead=nome_lead,
+            historico_conversa=historico_conversa,
+            ultima_mensagem=ultima_mensagem,
+            rag_context=rag_context,
+        )
+
         task_qualificacao_inicial = Task(
-            description=(
-                f"Você está em uma conversa com um lead chamado {nome_lead}. "
-                f"O histórico da conversa até agora é: {historico_conversa}. "
-                f"A última mensagem do lead foi: '{ultima_mensagem}'. "
-                "Com base nesse contexto, sua tarefa é dar o próximo passo no funil de qualificação. "
-                "Siga o fluxo: Saudação -> Situação -> Patrimônio -> Objetivo -> Urgência -> Interesse -> Agendamento. "
-                "Responda de forma curta e direta, sempre terminando com a próxima pergunta do funil."
-            ),
-            expected_output='A próxima mensagem a ser enviada para o lead, como uma string de texto simples.',
-            agent=qualifier_agent
+            description=task_description,
+            expected_output="Resposta única em texto curto, consultivo e objetivo, pronta para enviar.",
+            agent=qualifier_agent,
         )
 
         # 3. Montar a Equipe (Crew)
-        # Nossa equipe tem apenas um agente e uma tarefa por enquanto.
         qualificacao_crew = Crew(
             agents=[qualifier_agent],
             tasks=[task_qualificacao_inicial],
             process=Process.sequential,
-            verbose=self._crew_verbose
+            verbose=self._crew_verbose,
         )
 
-        # 4. Iniciar o Trabalho
-        # O método kickoff inicia a execução das tarefas pela equipe.
+        # 4. Iniciar o Trabalho e extrair o texto final
         resposta = qualificacao_crew.kickoff()
-
         return self._extract_response_text(resposta)
-
