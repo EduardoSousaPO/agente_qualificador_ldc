@@ -23,8 +23,6 @@ from backend.services.whatsapp_service import WhatsAppService
 from backend.services.qualification_service import QualificationService
 from backend.services.lead_detector import LeadDetectorService
 from backend.services.google_sheets_service import GoogleSheetsService
-# Reativando a importação do serviço LangChain
-from backend.services.langchain_agent_service import LangchainAgentService
 import time
 
 # 🔧 HOTFIX: Cache TTL robusto para deduplicação de mensagens WAHA
@@ -269,16 +267,6 @@ try:
     google_sheets_service = GoogleSheetsService()
     lead_detector = LeadDetectorService(lead_repo, whatsapp_service, qualification_service)
     
-    # Reativando a inicialização do serviço LangChain com logging
-    logger.info("Tentando inicializar o LangchainAgentService...")
-    try:
-        langchain_agent_service = LangchainAgentService()
-        logger.info("LangchainAgentService inicializado com SUCESSO.")
-    except Exception as e:
-        logger.error("FALHA CRÍTICA ao inicializar LangchainAgentService", error=str(e))
-        # Em um cenário de produção, poderíamos decidir não iniciar a app aqui
-        # raise e 
-    
     logger.info("Serviços inicializados com sucesso")
 except Exception as e:
     logger.error("Erro ao inicializar serviços", error=str(e))
@@ -353,9 +341,8 @@ def webhook_whatsapp():
 
         # Buscar ou criar lead
         lead_data = lead_repo.get_lead_by_phone(telefone)
-        is_new_lead = not lead_data
-
-        if is_new_lead:
+        
+        if not lead_data:
             logger.info("Criando novo lead", telefone=telefone, nome_contato=nome_contato)
             novo_lead = Lead(nome=nome_contato, telefone=telefone, canal='whatsapp', status='novo')
             lead_data = lead_repo.create_lead(novo_lead)
@@ -363,36 +350,12 @@ def webhook_whatsapp():
                 logger.error("Falha ao criar novo lead", telefone=telefone)
                 return jsonify({'status': 'error_creating_lead'}), 200
 
-        logger.info("Iniciando processamento da mensagem", lead_id=lead_data['id'], is_new_lead=is_new_lead)
+        logger.info("Iniciando processamento da mensagem", lead_id=lead_data['id'])
 
-        # Reativando a Lógica de Roteamento
-        if is_new_lead:
-            logger.info("Roteando novo lead para o LangchainAgentService", lead_id=lead_data['id'])
-            # O ID da sessão pode ser o próprio ID do lead para simplicidade inicial
-            session_id = lead_data['id']
-            resposta_langchain = langchain_agent_service.processar_mensagem(
-                session_id=session_id,
-                nome_lead=nome_contato,
-                mensagem=mensagem
-            )
-            # Enviar a resposta via WhatsApp
-            whatsapp_service.enviar_mensagem(telefone, resposta_langchain)
-            
-            # Registrar a mensagem enviada
-            message_repo.create_message(Message(
-                lead_id=lead_data['id'],
-                session_id=session_id, # Usar o mesmo ID
-                conteudo=resposta_langchain,
-                tipo='enviada',
-                metadata={'source': 'langchain_poc'}
-            ))
-
-            resultado = {'success': True, 'resposta': resposta_langchain, 'source': 'langchain'}
-        else:
-            # Lógica antiga para leads existentes
-            resultado = qualification_service.processar_mensagem_recebida(
-                lead_data['id'], mensagem
-            )
+        # Processar a mensagem com o serviço de qualificação
+        resultado = qualification_service.processar_mensagem_recebida(
+            lead_data['id'], mensagem
+        )
         
         if resultado.get('success', False):
             logger.info("Mensagem processada com sucesso", lead_id=lead_data['id'], resultado=resultado)
