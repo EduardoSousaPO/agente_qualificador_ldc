@@ -106,8 +106,7 @@ class CrewAIAgentService:
         rag_context: str,
     ) -> str:
         """Monta a descrição dinâmica da tarefa para o Crew."""
-        historico_relevante = "
-".join(historico_conversa[-6:]) if historico_conversa else "Sem mensagens anteriores registradas."
+        historico_relevante = "\n".join(historico_conversa[-6:]) if historico_conversa else "Sem mensagens anteriores registradas."
 
         checklist = """CHECKLIST OBRIGATÓRIO
 1. Reforce em poucas palavras a proposta de valor da LDC Capital usando as informações disponíveis (diagnóstico R1 gratuito conduzido por especialista CVM; se houver aderência, antecipe que existe uma possível R2 com estudo personalizado).
@@ -199,3 +198,4 @@ Entrega final esperada: uma única resposta em texto natural pronto para ser env
         # 4. Iniciar o Trabalho e extrair o texto final
         resposta = qualificacao_crew.kickoff()
         return self._extract_response_text(resposta)
+
