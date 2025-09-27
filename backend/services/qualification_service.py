@@ -1,1064 +1,457 @@
-"""
-Serviço de Qualificação de Leads
-Gerencia o fluxo completo de qualificação via WhatsApp
-"""
-import os
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
-import structlog
-import json
+"""Service orchestrating deterministic qualification flow."""
+from __future__ import annotations
 
-from backend.models.database_models import Session, Message, Qualificacao, SystemLog
-from backend.services.scoring_service import ScoringService
+import json
+import os
+import re
+from dataclasses import asdict
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional, List
+
+import structlog
+
+from backend.services.metrics_service import metrics_service
+from backend.models.database_models import (
+    Session,
+    SessionRepository,
+    MessageRepository,
+    QualificacaoRepository,
+    Qualificacao,
+    LeadRepository,
+    Message,
+    ReuniaoRepository,
+    Reuniao,
+)
+from backend.services.messaging_service import MessagingService
+from backend.services.qualification_flow import (
+    QualificationFlow,
+    FlowState,
+    FlowContext,
+    FlowResult,
+)
 from backend.services.whatsapp_service import WhatsAppService
-from backend.services.ai_conversation_service import AIConversationService
 
 logger = structlog.get_logger()
 
 
+class _SafeFormatDict(dict):
+    """Keeps unresolved placeholders intact when formatting custom messages."""
+
+    def __missing__(self, key: str) -> str:  # pragma: no cover - simple helper
+        return "{" + key + "}"
+
+
 class QualificationService:
-    """Serviço para gerenciar o processo de qualificação"""
-    
-    def __init__(self, session_repo, message_repo, qualificacao_repo, scoring_service, whatsapp_service):
+    """Handles session lifecycle, flow execution and persistence."""
+
+    def __init__(
+        self,
+        lead_repo: LeadRepository,
+        session_repo: SessionRepository,
+        message_repo: MessageRepository,
+        qualificacao_repo: QualificacaoRepository,
+        reuniao_repo: ReuniaoRepository,
+        messaging_service: MessagingService,
+        whatsapp_service: WhatsAppService,
+    ) -> None:
+        self.lead_repo = lead_repo
         self.session_repo = session_repo
         self.message_repo = message_repo
         self.qualificacao_repo = qualificacao_repo
-        self.scoring_service = scoring_service
+        self.reuniao_repo = reuniao_repo
+        self.messaging_service = messaging_service
         self.whatsapp_service = whatsapp_service
-        self.ai_service = AIConversationService()
-        
-        self.timeout_sessao = int(os.getenv('TIMEOUT_SESSAO_MINUTOS', '60'))
-        self.reset_session_minutes = int(os.getenv('RESET_SESSAO_MINUTOS', str(max(self.timeout_sessao * 3, 180))))
-        self.restart_keywords = [
-            'comecar do zero',
-            'comecar novamente',
-            'comecar de novo',
-            'reiniciar conversa',
-            'recomecar conversa',
-            'nova conversa',
-            'resetar conversa',
-            'podemos comecar do inicio',
-            'vamos comecar do inicio'
+        self.flow = QualificationFlow()
+        self.agenda_slots = self._load_agenda_slots()
+        self.agenda_link = os.getenv('AGENDA_DIAGNOSTICO_URL')
+
+    def _load_agenda_slots(self) -> List[str]:
+        raw = os.getenv('AGENDA_DIAGNOSTICO_SLOTS', '')
+        slots = [slot.strip() for slot in raw.split(';') if slot.strip()]
+        return slots or [
+            'Terça às 10h',
+            'Quinta às 16h',
+            'Sexta às 14h',
         ]
 
-        # Estados SPIN Selling - fluxo consultivo estruturado
-        self.estados = [
-            'inicio',        # Saudação + permissão para conversar
-            'situacao',      # SPIN-S: Descobrir cenário atual de investimentos
-            'patrimonio',    # SPIN-S+P: Qualificar faixa de patrimônio
-            'objetivo',      # SPIN-P+N: Entender metas e motivações
-            'prazo',         # SPIN-N: Urgência e horizonte temporal
-            'convencimento', # SPIN-P,I,N: Problemas, Implicações, Necessidade
-            'interesse',     # Testar interesse no diagnóstico
-            'agendamento',   # Marcar reunião específica
-            'educar',        # Nutrir lead não qualificado
-            'finalizado'     # Processo concluído
-        ]
-    
-    def iniciar_qualificacao(self, lead_id: str, telefone: str, canal: str) -> Dict[str, Any]:
-        """Inicia processo de qualificação para um lead"""
-        try:
-            logger.info("Iniciando qualificação", lead_id=lead_id, canal=canal)
-            
-            # Verificar se já existe sessão ativa
-            sessao_ativa = self.session_repo.get_active_session(lead_id)
-            
-            if sessao_ativa:
-                logger.info("Sessão já ativa encontrada", 
-                           lead_id=lead_id, 
-                           session_id=sessao_ativa['id'])
-                return {
-                    'success': True,
-                    'session_id': sessao_ativa['id'],
-                    'message': 'Sessão já ativa'
-                }
-            
-            # Criar nova sessão
-            nova_sessao = Session(
+    def iniciar_qualificacao(
+        self,
+        lead_id: str,
+        telefone: str,
+        nome: Optional[str] = None,
+        origem_canal: str = "planilha",
+        contexto_extra: Optional[str] = None,
+        mensagem_inicial: Optional[str] = None,
+        usar_template: bool = True,
+    ) -> Dict[str, Any]:
+        """Starts a new qualification session and sends the initial message."""
+        telefone_normalizado = self.normalizar_telefone(telefone)
+        session = self.session_repo.get_active_session(lead_id)
+        if session:
+            logger.info("Session already active", lead_id=lead_id, session_id=session['id'])
+            return {"success": True, "session_id": session['id'], "mensagem_inicial": None}
+
+        context = self.flow.initial_context(self._first_name(nome))
+        context.lead_id = lead_id
+        session_model = Session(
+            lead_id=lead_id,
+            estado=FlowState.WAITING_FIRST_REPLY.value,
+            contexto=self._context_to_dict(context, origem_canal, contexto_extra),
+            ativa=True,
+        )
+        created = self.session_repo.create_session(session_model)
+        if not created:
+            logger.error("Failed to create session", lead_id=lead_id)
+            return {"success": False, "error": "session_creation_failed"}
+
+        custom_message = None
+        if mensagem_inicial:
+            custom_message = self._render_custom_initial_message(
+                mensagem_inicial,
+                context=context,
+                canal=origem_canal,
+                contexto_extra=contexto_extra,
+            )
+
+        initial_message = custom_message or self._build_initial_message(
+            context=context,
+            canal=origem_canal,
+            contexto_extra=contexto_extra,
+            usar_template=usar_template,
+        )
+        send_result = self.messaging_service.send_message(
+            lead_id=lead_id,
+            telefone=telefone_normalizado,
+            mensagem=initial_message,
+            session_id=created['id'],
+            metadata={"etapa": "mensagem_inicial", "canal": origem_canal},
+        )
+        if not send_result.get("success"):
+            logger.error("Failed to send initial message", lead_id=lead_id, reason=send_result)
+            return {"success": False, "error": "whatsapp_send_failed", "details": send_result}
+
+        self.session_repo.update_session(
+            created['id'],
+            {
+                'estado': FlowState.WAITING_FIRST_REPLY.value,
+                'contexto': self._context_to_dict(context, origem_canal, contexto_extra),
+            },
+        )
+        self.lead_repo.update_lead(lead_id, {'status': 'em_qualificacao'})
+
+        return {
+            "success": True,
+            "session_id": created['id'],
+            "mensagem_inicial": initial_message,
+        }
+
+    def processar_mensagem_recebida(
+        self,
+        lead_id: str,
+        telefone: str,
+        mensagem: str,
+        nome: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Processes an inbound message from the lead."""
+        telefone_normalizado = self.normalizar_telefone(telefone)
+        session = self.session_repo.get_active_session(lead_id)
+        contexto_extra = None
+        origem = "whatsapp"
+
+        if not session:
+            logger.info("No active session found, creating a new one on the fly", lead_id=lead_id)
+            init = self.iniciar_qualificacao(
                 lead_id=lead_id,
-                estado='inicio',
-                contexto={'canal': canal, 'telefone': telefone}
+                telefone=telefone_normalizado,
+                nome=nome,
+                origem_canal=origem,
+                usar_template=False,
             )
-            
-            sessao_data = self.session_repo.create_session(nova_sessao)
-            
-            if not sessao_data:
-                raise Exception("Erro ao criar sessão")
-            
-            # Enviar mensagem inicial
-            mensagem_inicial = self.whatsapp_service.obter_mensagem_inicial(canal)
-            resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, mensagem_inicial)
-            
-            # Registrar mensagem enviada
-            if resultado_envio['success']:
-                self._registrar_mensagem(
-                    sessao_data['id'], 
-                    lead_id, 
-                    mensagem_inicial, 
-                    'enviada',
-                    {'message_id': resultado_envio.get('message_id')}
-                )
-                
-                # Atualizar estado da sessão
-                self.session_repo.update_session(sessao_data['id'], {'estado': 'saudacao'})
-                
-                logger.info("Qualificação iniciada com sucesso", 
-                           lead_id=lead_id,
-                           session_id=sessao_data['id'])
-                
-                return {
-                    'success': True,
-                    'session_id': sessao_data['id'],
-                    'message': 'Qualificação iniciada'
-                }
-            else:
-                logger.error("Erro ao enviar mensagem inicial", 
-                           lead_id=lead_id,
-                           error=resultado_envio.get('error'))
-                
-                return {
-                    'success': False,
-                    'error': 'Erro ao enviar mensagem inicial',
-                    'details': resultado_envio
-                }
-                
-        except Exception as e:
-            logger.error("Erro ao iniciar qualificação", lead_id=lead_id, error=str(e))
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def processar_mensagem_recebida(self, lead_id: str, mensagem: str) -> Dict[str, Any]:
-        """Processa mensagem recebida do lead"""
-        try:
-            logger.info("Processando mensagem recebida", lead_id=lead_id, mensagem=mensagem[:100])
-            
-            # Buscar sessão ativa
-            sessao = self.session_repo.get_active_session(lead_id)
+            if not init.get("success"):
+                return init
+            session = self.session_repo.get_active_session(lead_id)
 
-            if sessao and self._deve_reiniciar_conversa(sessao, mensagem):
-                logger.info("Encerrando sessão ativa para reinício",
-                           lead_id=lead_id,
-                           session_id=sessao['id'],
-                           estado=sessao.get('estado'))
-                self._encerrar_sessao_para_reinicio(sessao, lead_id, motivo='reinicio_sessao_ativa')
-                sessao = None
+        session_id = session['id']
+        context = self._context_from_session(session)
+        context.lead_id = lead_id
+        estado_atual = FlowState(session.get('estado', FlowState.WAITING_FIRST_REPLY.value))
 
-            if not sessao:
-                # Verificar se há uma sessão criada recentemente (últimos 30 segundos)
-                # Isso previne condições de corrida quando o WAHA reenvia a mesma mensagem
-                sessao_recente = self.session_repo.get_recent_session(lead_id, 30)
-
-                if sessao_recente and self._deve_reiniciar_conversa(sessao_recente, mensagem):
-                    logger.info("Sessão recente descartada para reinício",
-                               lead_id=lead_id,
-                               session_id=sessao_recente['id'],
-                               estado=sessao_recente.get('estado'))
-                    self._encerrar_sessao_para_reinicio(sessao_recente, lead_id, motivo='reinicio_sessao_recente')
-                    sessao_recente = None
-
-                if sessao_recente:
-                    logger.info("Sessão recente encontrada, reutilizando",
-                               lead_id=lead_id,
-                               session_id=sessao_recente['id'],
-                               session_age_seconds=30)
-                    sessao = sessao_recente
-
-                    # Ativar a sessão se não estiver ativa
-                    if not sessao.get('ativa', False):
-                        self.session_repo.update_session(sessao['id'], {'ativa': True})
-                        sessao['ativa'] = True
-                else:
-                    logger.info("Nenhuma sessão válida encontrada, criando nova sessão", lead_id=lead_id)
-                    # Criar nova sessão automaticamente
-                    nova_sessao = Session(
-                        lead_id=lead_id,
-                        estado='inicio',
-                        contexto={},
-                        ativa=True
-                    )
-                    sessao = self.session_repo.create_session(nova_sessao)
-
-                    if not sessao:
-                        logger.error("Erro ao criar nova sessão", lead_id=lead_id)
-                        return {
-                            'success': False,
-                            'error': 'Erro ao criar sessão'
-                        }
-
-                    logger.info("Nova sessão criada", lead_id=lead_id, session_id=sessao['id'])
-
-            # Verificar timeout da sessão
-            if self._verificar_timeout_sessao(sessao):
-                return self._processar_timeout_sessao(sessao, lead_id)
-            
-            # Verificar se a mesma mensagem já foi processada recentemente (últimos 10 segundos)
-            # Isso previne processamento duplicado de mensagens idênticas
-            if self._mensagem_ja_processada(sessao['id'], mensagem, 10):
-                logger.info("Mensagem duplicada detectada, ignorando", 
-                           lead_id=lead_id, 
-                           session_id=sessao['id'],
-                           mensagem=mensagem[:50])
-                return {
-                    'success': True,
-                    'message': 'Mensagem duplicada ignorada'
-                }
-            
-            # Verificar se há mensagem enviada muito recentemente para evitar múltiplas respostas
-            if self._tem_mensagem_enviada_recente(sessao['id'], 8):
-                logger.info("Mensagem enviada muito recente, evitando spam", 
-                           lead_id=lead_id,
-                           session_id=sessao['id'])
-                return {
-                    'success': True,
-                    'message': 'Aguardando intervalo entre mensagens',
-                    'skipped': True
-                }
-            
-            # Registrar mensagem recebida
-            self._registrar_mensagem(sessao['id'], lead_id, mensagem, 'recebida')
-            
-            # Processar com IA - conversação humanizada
-            return self._processar_com_ia(sessao, lead_id, mensagem)
-                
-        except Exception as e:
-            logger.error("Erro ao processar mensagem", lead_id=lead_id, error=str(e))
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def _processar_inicio(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
-        """Processa primeira mensagem do lead - envia saudação"""
-        try:
-            logger.info("Processando estado inicial", lead_id=lead_id)
-            
-            # Buscar dados do lead usando o repositório correto
-            from backend.models.database_models import DatabaseConnection, LeadRepository
-            db_conn = DatabaseConnection()
-            lead_repo = LeadRepository(db_conn)
-            
-            # Buscar lead pelo ID
-            lead_data = db_conn.get_client().table('leads').select('*').eq('id', lead_id).execute()
-            if not lead_data.data:
-                return {'success': False, 'error': 'Lead não encontrado'}
-            
-            lead = lead_data.data[0]
-            telefone = lead['telefone']
-            nome = lead['nome'] or 'amigo(a)'
-            
-            # Criar mensagem de saudação personalizada
-            saudacao = f"""Olá {nome}! 👋
-
-Sou o assistente da LDC Capital e vou te ajudar com algumas perguntas rápidas para entender melhor seu perfil de investimento.
-
-Isso vai levar apenas 2 minutos e no final vou te dar uma recomendação personalizada! 
-
-Vamos começar? 😊"""
-            
-            # Não enviar saudação aqui - já foi enviada no iniciar_qualificacao
-            # Apenas atualizar contexto e estado
-            contexto_atualizado = sessao.get('contexto', {})
-            contexto_atualizado.update({
-                'telefone': telefone,
-                'nome': nome,
-                'inicio_qualificacao': datetime.now().isoformat()
-            })
-
-            self.session_repo.update_session(sessao['id'], {
-                'estado': 'saudacao',
-                'contexto': contexto_atualizado
-            })
-
-            return {
-                'success': True,
-                'next_state': 'saudacao',
-                'message': 'Estado atualizado para saudação'
-            }
-                
-        except Exception as e:
-            logger.error("Erro ao processar início", lead_id=lead_id, error=str(e))
-            return {'success': False, 'error': str(e)}
-    
-    def _mensagem_ja_processada(self, session_id: str, mensagem: str, segundos: int = 10) -> bool:
-        """Verifica se a mesma mensagem já foi processada recentemente"""
-        try:
-            from datetime import datetime, timedelta
-            
-            # Calcular timestamp limite
-            time_limit = datetime.now() - timedelta(seconds=segundos)
-            time_limit_str = time_limit.isoformat()
-            
-            # Buscar mensagens recentes idênticas na sessão
-            result = self.session_repo.db.table('messages').select('*').eq('session_id', session_id).eq('conteudo', mensagem).eq('tipo', 'recebida').gte('created_at', time_limit_str).execute()
-            
-            return len(result.data) > 0
-        except Exception as e:
-            logger.error("Erro ao verificar mensagem duplicada", error=str(e))
-            return False
-    
-    def _processar_com_ia(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
-        """Processa mensagem usando IA para conversação humanizada"""
-        try:
-            # 1. Obter e validar dados do lead
-            lead = self._obter_e_validar_lead(lead_id)
-            if not lead:
-                return {'success': False, 'error': 'Lead inválido ou não encontrado'}
-
-            # 2. Buscar histórico da conversa
-            historico = self._buscar_historico_conversa(sessao['id'])
-            
-            # 3. Gerar resposta com IA
-            resposta_ia = self.ai_service.gerar_resposta_humanizada(
-                nome_lead=lead['nome'],
-                lead_canal=lead.get('canal', 'whatsapp'),
-                ultima_mensagem_lead=mensagem,
-                historico_conversa=historico,
-                estado_atual=sessao['estado'],
-                session_id=sessao['id']
+        self.message_repo.create_message(
+            Message(
+                session_id=session_id,
+                lead_id=lead_id,
+                conteudo=mensagem,
+                tipo='recebida',
+                metadata={'fonte': origem},
             )
-            
-            if not resposta_ia.get('success', False):
-                logger.error("Falha ao gerar resposta da IA", lead_id=lead_id, detalhes=resposta_ia)
-                # Mesmo em falha da IA, pode haver uma resposta de fallback
-                if 'resposta' in resposta_ia:
-                    self.whatsapp_service.enviar_mensagem(lead['telefone'], resposta_ia['resposta'])
-                return resposta_ia
-            
-            # 4. Enviar resposta ao lead
-            resultado_envio = self.whatsapp_service.enviar_mensagem(
-                lead['telefone'],
-                resposta_ia['resposta']
-            )
-            
-            if not resultado_envio.get('success', False):
-                logger.error("Falha ao enviar mensagem via WhatsApp", lead_id=lead_id, detalhes=resultado_envio)
-                return {
-                    'success': False,
-                    'error': 'Erro ao enviar resposta via WhatsApp',
-                    'details': resultado_envio
-                }
-            
-            # 5. Registrar e atualizar estado
-            self._registrar_mensagem(sessao['id'], lead_id, resposta_ia['resposta'], 'enviada')
-            self._atualizar_estado_sessao(sessao, resposta_ia)
-            self._processar_acao_ia(sessao, lead_id, resposta_ia)
-            
-            return {
-                'success': True,
-                'resposta_enviada': resposta_ia['resposta'],
-                'acao': resposta_ia.get('acao'),
-                'novo_estado': resposta_ia.get('proximo_estado')
-            }
-            
-        except Exception as e:
-            logger.exception("Erro crítico ao processar com IA", lead_id=lead_id)
-            
-            # Tentar enviar um fallback final, se possível
-            try:
-                lead_fallback = self._obter_e_validar_lead(lead_id)
-                if lead_fallback and lead_fallback.get('telefone'):
-                    mensagem_fallback = "Desculpe, nosso sistema está enfrentando um problema técnico. Um de nossos consultores entrará em contato em breve."
-                    self.whatsapp_service.enviar_mensagem(lead_fallback['telefone'], mensagem_fallback)
-            except Exception as fallback_e:
-                logger.error("Falha ao enviar mensagem de fallback", lead_id=lead_id, fallback_error=str(fallback_e))
-
-            return {
-                'success': False,
-                'error': str(e),
-                'fallback_sent': True
-            }
-
-    def _obter_e_validar_lead(self, lead_id: str) -> Optional[Dict[str, Any]]:
-        """Busca e valida os dados essenciais de um lead."""
-        from backend.models.database_models import DatabaseConnection
-        db_conn = DatabaseConnection()
-        
-        lead_data = db_conn.get_client().table('leads').select('*').eq('id', lead_id).execute()
-        
-        if not lead_data.data:
-            logger.error("Lead não encontrado no banco de dados", lead_id=lead_id)
-            return None
-            
-        lead = lead_data.data[0]
-        
-        if not self._verificar_integridade_lead(lead, lead_id):
-            return None # A verificação de integridade já loga o erro
-            
-        return lead
-
-    def _atualizar_estado_sessao(self, sessao: Dict[str, Any], resposta_ia: Dict[str, Any]):
-        """Atualiza o estado e contexto da sessão com base na resposta da IA."""
-        proximo_estado = resposta_ia.get('proximo_estado')
-        estado_atual = sessao.get('estado')
-
-        if proximo_estado and proximo_estado != estado_atual:
-            contexto_atualizado = sessao.get('contexto', {})
-            contexto_atualizado.update(resposta_ia.get('contexto_atualizado', {}))
-            
-            self.session_repo.update_session(sessao['id'], {
-                'estado': proximo_estado,
-                'contexto': contexto_atualizado
-            })
-
-    def _processar_acao_ia(self, sessao: Dict[str, Any], lead_id: str, resposta_ia: Dict[str, Any]):
-        """Processa ações como agendar, educar ou finalizar com base na resposta da IA."""
-        acao = resposta_ia.get('acao')
-        
-        if acao == 'agendar':
-            self._finalizar_qualificacao(sessao, lead_id, 'agendado')
-        elif acao == 'educar':
-            self._finalizar_qualificacao(sessao, lead_id, 'educar')
-        elif acao == 'finalizar':
-            score_parcial = resposta_ia.get('score_parcial', 0)
-            score_final = self._calcular_score_progressivo(sessao, score_parcial)
-            self._finalizar_qualificacao(sessao, lead_id, 'finalizado', score_final)
-    
-    def _buscar_historico_conversa(self, session_id: str) -> List[Dict[str, str]]:
-        """Busca o histórico de mensagens da conversa"""
-        try:
-            messages = self.message_repo.get_messages_by_session(session_id)
-            return [
-                {
-                    'tipo': msg['tipo'],
-                    'conteudo': msg['conteudo'],
-                    'created_at': msg['created_at']
-                }
-                for msg in messages
-            ]
-        except Exception as e:
-            logger.error("Erro ao buscar histórico", error=str(e))
-            return []
-    
-    def _mapear_contexto_para_qualificacao(self, sessao: Dict[str, Any], score: int) -> Qualificacao:
-        """Cria um objeto Qualificacao a partir do contexto da sessão."""
-        contexto = sessao.get('contexto', {})
-        return Qualificacao(
-            lead_id=sessao['lead_id'],
-            session_id=sessao['id'],
-            score_total=score,
-            patrimonio_resposta=contexto.get('patrimonio_range'),
-            objetivo_resposta=contexto.get('objetivo'),
-            urgencia_resposta=contexto.get('urgencia'),
-            interesse_resposta=contexto.get('interesse'),
-            observacoes=json.dumps(contexto)
         )
 
-    def _finalizar_qualificacao(self, sessao: Dict[str, Any], lead_id: str, status_final: str, score_base: int = 0):
-        """Finaliza o processo de qualificação, calcula o score e salva no banco."""
-        try:
-            # 1. Definir score com base no status final
-            if status_final == 'agendado':
-                score = 85
-            elif status_final == 'educar':
-                score = 45
-            else: # 'finalizado'
-                score = self._calcular_score_progressivo(sessao, score_base)
+        flow_result = self.flow.next_step(estado_atual, context, mensagem)
 
-            # 2. Criar registro de qualificação usando o mapeador
-            qualificacao = self._mapear_contexto_para_qualificacao(sessao, score)
-            self.qualificacao_repo.create_qualificacao(qualificacao)
-            
-            # 3. Atualizar score do lead
-            from backend.models.database_models import DatabaseConnection
-            db_conn = DatabaseConnection()
-            db_conn.get_client().table('leads').update({'score': score}).eq('id', lead_id).execute()
-            
-            # 4. Enviar resultado para CRM automaticamente
-            self._enviar_resultado_crm_automatico(lead_id, score)
-            
-            logger.info("Qualificação finalizada", lead_id=lead_id, score=score, status=status_final)
-            
-            try:
-                self.ai_service.reset_session(sessao['id'])
-            except Exception as e:
-                logger.warning('Falha ao limpar cache da sessão ao finalizar', session_id=sessao.get('id'), lead_id=lead_id, error=str(e))
+        # Ajustar mensagens para estados específicos antes do envio
+        if flow_result.next_state == FlowState.OFFER_MEETING:
+            flow_result.reply = self._format_offer_message(flow_result.context)
+        elif flow_result.next_state == FlowState.SCHEDULING and not flow_result.finalize_session:
+            flow_result.reply = self._format_scheduling_prompt(flow_result.context)
+        elif flow_result.lead_status == 'reuniao_agendada':
+            flow_result.reply = self._format_confirmation_message(flow_result.context)
 
-        except Exception as e:
-            logger.error("Erro ao finalizar qualificação", error=str(e), lead_id=lead_id)
-    
-    def _calcular_score_progressivo(self, sessao: Dict[str, Any], score_ia: int) -> int:
-        """Calcula score baseado no progresso no funil SPIN"""
-        try:
-            estado_atual = sessao.get('estado', 'inicio')
-            contexto = sessao.get('contexto', {})
-            
-            # Score base por estado alcançado
-            scores_estado = {
-                'inicio': 10,
-                'situacao': 20,
-                'patrimonio': 35,  # Qualificou patrimônio (+30pts)
-                'objetivo': 50,    # Tem objetivo claro (+25pts)  
-                'prazo': 65,       # Definiu urgência (+25pts)
-                'convencimento': 70,  # Entendeu diferencial
-                'interesse': 75,   # Demonstrou interesse (+20pts)
-                'agendamento': 80, # Chegou ao agendamento
-                'educar': 45       # Não qualificado mas engajado
-            }
-            
-            score_base = scores_estado.get(estado_atual, 10)
-            
-            # Bonificações por informações coletadas
-            bonus = 0
-            if contexto.get('patrimonio_faixa'):
-                if 'milhão' in contexto['patrimonio_faixa'].lower():
-                    bonus += 15  # Patrimônio alto
-                elif '500' in contexto['patrimonio_faixa']:
-                    bonus += 10  # Patrimônio médio
-                else:
-                    bonus += 5   # Patrimônio base
-            
-            if contexto.get('objetivo') and len(contexto['objetivo']) > 10:
-                bonus += 10  # Objetivo bem definido
-                
-            if contexto.get('urgencia') == 'alta':
-                bonus += 10  # Urgência alta
-            
-            # Score final (máximo 100)
-            score_final = min(100, max(score_base + bonus, score_ia))
-            
-            logger.info("Score calculado", 
-                       estado=estado_atual, 
-                       score_base=score_base, 
-                       bonus=bonus, 
-                       score_final=score_final)
-            
-            return score_final
-            
-        except Exception as e:
-            logger.error("Erro ao calcular score progressivo", error=str(e))
-            return max(30, score_ia)  # Fallback
-    
-    def _enviar_resultado_crm_automatico(self, lead_id: str, score: int):
-        """Envia resultado da qualificação para CRM automaticamente"""
-        try:
-            # Só enviar se score for alto o suficiente (qualificado ou semi-qualificado)
-            if score < 40:
-                logger.info("Score baixo - não enviando para CRM", lead_id=lead_id, score=score)
-                return
-            
-            from backend.services.google_sheets_service import GoogleSheetsService
-            from backend.models.database_models import LeadRepository, DatabaseConnection
-            
-            # Inicializar serviços
-            google_sheets_service = GoogleSheetsService()
-            db_conn = DatabaseConnection()
-            lead_repo = LeadRepository(db_conn)
-            
-            # Buscar dados do lead
-            lead_data = lead_repo.get_lead_by_id(lead_id)
-            if not lead_data:
-                logger.error("Lead não encontrado para envio CRM", lead_id=lead_id)
-                return
-            
-            # Buscar dados da qualificação
-            qualificacao = self.qualificacao_repo.get_qualificacao_by_lead(lead_id)
-            
-            # Preparar dados para CRM
-            crm_data = {
-                'nome': lead_data['nome'],
-                'telefone': lead_data['telefone'],
-                'email': lead_data.get('email', ''),
-                'canal': lead_data['canal'],
-                'status': lead_data['status'],
-                'score': score,
-                'patrimonio_faixa': qualificacao.get('patrimonio_faixa', '') if qualificacao else '',
-                'objetivo': qualificacao.get('objetivo', '') if qualificacao else '',
-                'prazo': qualificacao.get('prazo', '') if qualificacao else '',
-                'resumo_conversa': google_sheets_service.gerar_resumo_conversa(lead_id),
-                'proximo_passo': google_sheets_service.definir_proximo_passo(
-                    lead_data['status'], score
-                )
-            }
-            
-            # Enviar para CRM
-            resultado = google_sheets_service.enviar_resultado_crm(crm_data)
-            
-            if resultado['success']:
-                logger.info("Resultado enviado automaticamente para CRM", 
-                           lead_id=lead_id, 
-                           nome=lead_data['nome'],
-                           score=score)
-            else:
-                logger.warning("Falha ao enviar resultado para CRM", 
-                              lead_id=lead_id, 
-                              error=resultado.get('error'))
-            
-        except Exception as e:
-            logger.error("Erro ao enviar resultado CRM automaticamente", 
-                        lead_id=lead_id, 
-                        error=str(e))
-    
-    def _processar_saudacao(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
-        """Processa resposta à saudação inicial"""
-        telefone = sessao['contexto'].get('telefone')
-        
-        # Enviar primeira pergunta
-        pergunta_1 = self.whatsapp_service.obter_pergunta(1)
-        resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, pergunta_1)
-        
-        if resultado_envio['success']:
-            # Registrar pergunta enviada
-            self._registrar_mensagem(sessao['id'], lead_id, pergunta_1, 'enviada')
-            
-            # Atualizar estado
-            self.session_repo.update_session(sessao['id'], {'estado': 'pergunta_1'})
-            
-            return {
-                'success': True,
-                'next_state': 'pergunta_1',
-                'message': 'Primeira pergunta enviada'
-            }
-        else:
-            return {
-                'success': False,
-                'error': 'Erro ao enviar primeira pergunta',
-                'details': resultado_envio
-            }
-    
-    def _processar_resposta_pergunta(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
-        """Processa resposta a uma pergunta de qualificação"""
-        estado_atual = sessao['estado']
-        numero_pergunta = int(estado_atual.split('_')[1])
-        telefone = sessao['contexto'].get('telefone')
-        
-        # Validar resposta
-        tipo_pergunta = self._obter_tipo_pergunta(numero_pergunta)
-        
-        if not self.scoring_service.validar_resposta(mensagem, tipo_pergunta):
-            # Resposta inválida - solicitar nova resposta
-            mensagem_erro = self.whatsapp_service.gerar_mensagem_erro_resposta()
-            resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, mensagem_erro)
-            
-            if resultado_envio['success']:
-                self._registrar_mensagem(sessao['id'], lead_id, mensagem_erro, 'enviada')
-            
-            return {
-                'success': True,
-                'message': 'Resposta inválida - nova tentativa solicitada',
-                'validation_error': True
-            }
-        
-        # Armazenar resposta no contexto da sessão
-        contexto = sessao['contexto'].copy()
-        contexto[f'resposta_{numero_pergunta}'] = mensagem
-        
-        self.session_repo.update_session(sessao['id'], {'contexto': contexto})
-        
-        # Determinar próximo passo
-        if numero_pergunta < 4:
-            # Enviar próxima pergunta
-            proxima_pergunta = numero_pergunta + 1
-            pergunta = self.whatsapp_service.obter_pergunta(proxima_pergunta)
-            
-            resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, pergunta)
-            
-            if resultado_envio['success']:
-                self._registrar_mensagem(sessao['id'], lead_id, pergunta, 'enviada')
-                self.session_repo.update_session(sessao['id'], {'estado': f'pergunta_{proxima_pergunta}'})
-                
-                return {
-                    'success': True,
-                    'next_state': f'pergunta_{proxima_pergunta}',
-                    'message': f'Pergunta {proxima_pergunta} enviada'
-                }
-            else:
-                return {
-                    'success': False,
-                    'error': f'Erro ao enviar pergunta {proxima_pergunta}',
-                    'details': resultado_envio
-                }
-        else:
-            # Todas as perguntas respondidas - calcular score
-            return self._finalizar_qualificacao_com_score(sessao, lead_id, contexto)
-    
-    def _finalizar_qualificacao_com_score(self, sessao: Dict[str, Any], lead_id: str, contexto: Dict[str, Any]) -> Dict[str, Any]:
-        """Finaliza processo de qualificação calculando score"""
-        try:
-            telefone = contexto.get('telefone')
-            
-            # Calcular score
-            resultado_scoring = self.scoring_service.calcular_score_completo(
-                contexto.get('resposta_1', ''),
-                contexto.get('resposta_2', ''),
-                contexto.get('resposta_3', ''),
-                contexto.get('resposta_4', '')
-            )
-            
-            # Criar registro de qualificação
-            qualificacao = Qualificacao(
+        reply_sent = None
+        if flow_result.reply:
+            send_metadata = {"etapa": flow_result.next_state.value}
+            send_result = self.messaging_service.send_message(
                 lead_id=lead_id,
-                session_id=sessao['id'],
-                patrimonio_resposta=contexto.get('resposta_1'),
-                patrimonio_pontos=resultado_scoring.patrimonio_pontos,
-                objetivo_resposta=contexto.get('resposta_2'),
-                objetivo_pontos=resultado_scoring.objetivo_pontos,
-                urgencia_resposta=contexto.get('resposta_3'),
-                urgencia_pontos=resultado_scoring.urgencia_pontos,
-                interesse_resposta=contexto.get('resposta_4'),
-                interesse_pontos=resultado_scoring.interesse_pontos,
-                resultado=resultado_scoring.resultado,
-                observacoes=resultado_scoring.observacoes
+                telefone=telefone_normalizado,
+                mensagem=flow_result.reply,
+                session_id=session_id,
+                metadata=send_metadata,
             )
-            
-            qualificacao_data = self.qualificacao_repo.create_qualificacao(qualificacao)
-            
-            if not qualificacao_data:
-                raise Exception("Erro ao salvar qualificação")
-            
-            # Gerar mensagem de resultado
-            if resultado_scoring.resultado == 'qualificado':
-                mensagem_resultado = self.whatsapp_service.gerar_mensagem_score_alto(
-                    contexto.get('nome', 'Cliente'),
-                    resultado_scoring.score_total
-                )
-            else:
-                mensagem_resultado = self.whatsapp_service.gerar_mensagem_score_baixo(
-                    contexto.get('nome', 'Cliente'),
-                    resultado_scoring.score_total
-                )
-            
-            # Enviar resultado
-            resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, mensagem_resultado)
-            
-            if resultado_envio['success']:
-                self._registrar_mensagem(sessao['id'], lead_id, mensagem_resultado, 'enviada')
-                
-                # Atualizar estado da sessão
-                self.session_repo.update_session(sessao['id'], {
-                    'estado': 'resultado',
-                    'contexto': {**contexto, 'score': resultado_scoring.score_total}
-                })
-                
-                logger.info("Qualificação finalizada com sucesso", 
-                           lead_id=lead_id,
-                           score=resultado_scoring.score_total,
-                           resultado=resultado_scoring.resultado)
-                
-                return {
-                    'success': True,
-                    'score': resultado_scoring.score_total,
-                    'resultado': resultado_scoring.resultado,
-                    'qualificacao_id': qualificacao_data['id'],
-                    'message': 'Qualificação finalizada'
-                }
-            else:
-                logger.error("Erro ao enviar resultado", 
-                           lead_id=lead_id,
-                           error=resultado_envio.get('error'))
-                
-                return {
-                    'success': False,
-                    'error': 'Erro ao enviar resultado',
-                    'details': resultado_envio
-                }
-                
-        except Exception as e:
-            logger.error("Erro ao finalizar qualificação", lead_id=lead_id, error=str(e))
-            return {
-                'success': False,
-                'error': str(e)
-            }
-    
-    def _processar_pos_resultado(self, sessao: Dict[str, Any], lead_id: str, mensagem: str) -> Dict[str, Any]:
-        """Processa mensagens após o resultado da qualificação"""
-        # TODO: Implementar lógica para agendamento de reuniões ou envio de conteúdo
-        telefone = sessao['contexto'].get('telefone')
-        score = sessao['contexto'].get('score', 0)
-        
-        if score >= 70:
-            # Lead qualificado - processar agendamento
-            resposta = """
-Perfeito! Vou conectar você com nossa equipe de agendamento.
+            reply_sent = send_result
 
-Em breve, um de nossos especialistas entrará em contato para agendar sua consulta.
+        self.session_repo.update_session(
+            session_id,
+            {
+                'estado': flow_result.next_state.value,
+                'contexto': self._context_to_dict(flow_result.context, origem, contexto_extra),
+                'ativa': not flow_result.finalize_session,
+            },
+        )
 
-Obrigado pela confiança! 🙏
-            """.strip()
-        else:
-            # Lead não qualificado - oferecer conteúdo
-            resposta = """
-Ótimo! Vou enviar os materiais por email.
+        if flow_result.lead_status:
+            self.lead_repo.update_lead(lead_id, {'status': flow_result.lead_status})
 
-Se tiver alguma dúvida ou quiser conversar mais tarde, é só me chamar!
+        if flow_result.notes:
+            self._persist_qualificacao(lead_id, session_id, flow_result)
+        if flow_result.lead_status == 'reuniao_agendada':
+            self._registrar_reuniao(lead_id, session_id, flow_result.context.meeting_preference)
+            # Registrar métrica de reunião agendada
+            slot = flow_result.context.meeting_preference or "não especificado"
+            metrics_service.record_meeting_scheduled(lead_id, slot, True)
 
-Sucesso na sua jornada financeira! 💪
-            """.strip()
-        
-        resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, resposta)
-        
-        if resultado_envio['success']:
-            self._registrar_mensagem(sessao['id'], lead_id, resposta, 'enviada')
-            
-            # Finalizar sessão
-            self.session_repo.update_session(sessao['id'], {
-                'estado': 'finalizado',
-                'ativa': False
-            })
+        return {
+            "success": True,
+            "session_id": session_id,
+            "estado": flow_result.next_state.value,
+            "mensagem_enviada": flow_result.reply,
+            "whatsapp": reply_sent,
+            "finalizada": flow_result.finalize_session,
+        }
 
-            try:
-                self.ai_service.reset_session(sessao['id'])
-            except Exception as e:
-                logger.warning('Falha ao limpar cache da sessão após finalização', session_id=sessao['id'], lead_id=lead_id, error=str(e))
+    # ------------------------------------------------------------------
+    # Helpers
 
-            return {
-                'success': True,
-                'message': 'Processo finalizado'
-            }
-        else:
-            return {
-                'success': False,
-                'error': 'Erro ao enviar resposta final',
-                'details': resultado_envio
-            }
-    
-    def _normalizar_texto(self, valor: Optional[str]) -> str:
-        if not valor:
-            return ""
-        try:
-            texto = unicodedata.normalize('NFKD', valor)
-            texto = texto.encode('ascii', 'ignore').decode('utf-8')
-        except Exception:
-            texto = valor
-        return texto.lower().strip()
+    def _persist_qualificacao(self, lead_id: str, session_id: str, flow_result: FlowResult) -> None:
+        registro = self.qualificacao_repo.get_lead_qualificacao(lead_id)
+        if not registro:
+            registro = self.qualificacao_repo.create_qualificacao(
+                Qualificacao(lead_id=lead_id, session_id=session_id)
+            )
+        if not registro:
+            return
 
-    def _lead_pediu_reinicio(self, mensagem: str) -> bool:
-        texto = self._normalizar_texto(mensagem)
-        if not texto:
-            return False
-        return any(chave in texto for chave in self.restart_keywords)
+        updates: Dict[str, Any] = {}
+        notas = flow_result.notes
+        if 'patrimonio_faixa' in notas:
+            updates['patrimonio_resposta'] = notas['patrimonio_faixa']
+        if 'objetivo' in notas:
+            updates['objetivo_resposta'] = notas['objetivo']
+        if 'prazo' in notas:
+            updates['urgencia_resposta'] = notas['prazo']
+        if flow_result.lead_status == 'reuniao_agendada':
+            updates['resultado'] = 'reuniao_agendada'
+        elif flow_result.lead_status == 'qualificado':
+            updates['resultado'] = 'qualificado'
+        elif flow_result.lead_status == 'nao_interessado':
+            updates['resultado'] = 'nao_interessado'
+        updates['observacoes'] = json.dumps(notas)
+        self.qualificacao_repo.update_qualificacao(registro['id'], updates)
 
-    def _sessao_antiga(self, sessao: Dict[str, Any], minutos: int) -> bool:
-        if not sessao or minutos <= 0:
-            return False
-        referencia = sessao.get('updated_at') or sessao.get('created_at')
-        if not referencia:
-            return False
-        try:
-            marco = datetime.fromisoformat(referencia.replace('Z', '+00:00'))
-            agora = datetime.utcnow().replace(tzinfo=marco.tzinfo)
-            return (agora - marco) > timedelta(minutes=minutos)
-        except Exception:
-            return False
-
-    def _deve_reiniciar_conversa(self, sessao: Dict[str, Any], mensagem: str) -> bool:
-        if not sessao:
-            return False
-        estado = (sessao.get('estado') or '').lower()
-        if estado in {'finalizado', 'resultado', 'agendado', 'educar'}:
-            return True
-        if not sessao.get('ativa', True):
-            return True
-        if self._sessao_antiga(sessao, self.reset_session_minutes):
-            return True
-        if mensagem and self._lead_pediu_reinicio(mensagem):
-            return True
-        return False
-
-    def _encerrar_sessao_para_reinicio(self, sessao: Dict[str, Any], lead_id: str, motivo: str = ''):
-        if not sessao or not sessao.get('id'):
+    def _registrar_reuniao(self, lead_id: str, session_id: str, preferencia: Optional[str]) -> None:
+        if not preferencia:
             return
         try:
-            self.session_repo.update_session(sessao['id'], {'ativa': False})
-        except Exception as e:
-            logger.warning("Falha ao atualizar sessão para reinício",
-                           session_id=sessao.get('id'),
-                           lead_id=lead_id,
-                           motivo=motivo,
-                           error=str(e))
-        try:
-            self.ai_service.reset_session(sessao.get('id'))
-        except Exception as e:
-            logger.warning("Falha ao limpar cache da sessão",
-                           session_id=sessao.get('id'),
-                           lead_id=lead_id,
-                           motivo=motivo,
-                           error=str(e))
+            reuniao = Reuniao(
+                lead_id=lead_id,
+                status='agendado',
+                link_reuniao=self.agenda_link,
+                observacoes=f"Sessão {session_id}: {preferencia}",
+            )
+            self.reuniao_repo.create_reuniao(reuniao)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error(
+                "Erro ao registrar reunião",
+                lead_id=lead_id,
+                session_id=session_id,
+                error=str(exc),
+                preferencia=preferencia,
+            )
 
-    def _verificar_timeout_sessao(self, sessao: Dict[str, Any]) -> bool:
-        """Verifica se a sessão expirou por timeout"""
-        if not sessao.get('updated_at'):
-            return False
-        
-        try:
-            ultima_atualizacao = datetime.fromisoformat(sessao['updated_at'].replace('Z', '+00:00'))
-            agora = datetime.utcnow().replace(tzinfo=ultima_atualizacao.tzinfo)
-            
-            diferenca = agora - ultima_atualizacao
-            return diferenca > timedelta(minutes=self.timeout_sessao)
-            
-        except Exception:
-            return False
-    
-    def _processar_timeout_sessao(self, sessao: Dict[str, Any], lead_id: str) -> Dict[str, Any]:
-        """Processa sessão que expirou por timeout"""
-        
-        # 1. Obter e validar dados do lead para garantir que temos o telefone
-        lead = self._obter_e_validar_lead(lead_id)
-        if not lead or not lead.get('telefone'):
-            logger.error("Não foi possível processar timeout - lead ou telefone inválido", 
-                       lead_id=lead_id, 
-                       session_id=sessao['id'])
-            # Desativar a sessão mesmo se o lead for inválido para evitar loops
-            self.session_repo.update_session(sessao['id'], {'ativa': False})
-            return {'success': False, 'error': 'Lead ou telefone inválido para mensagem de timeout'}
+    def _context_to_dict(
+        self,
+        context: FlowContext,
+        origem_canal: Optional[str],
+        contexto_extra: Optional[str],
+    ) -> Dict[str, Any]:
+        data = asdict(context)
+        data['origem_canal'] = origem_canal
+        if contexto_extra:
+            data['contexto_extra'] = contexto_extra
+        return data
 
-        telefone = lead['telefone']
-        
-        # Enviar mensagem de timeout
-        mensagem_timeout = self.whatsapp_service.gerar_mensagem_timeout()
-        resultado_envio = self.whatsapp_service.enviar_mensagem(telefone, mensagem_timeout)
-        
-        if resultado_envio['success']:
-            self._registrar_mensagem(sessao['id'], lead_id, mensagem_timeout, 'enviada')
-        
-        # Desativar sessão
-        self.session_repo.update_session(sessao['id'], {'ativa': False})
-
-        try:
-            self.ai_service.reset_session(sessao['id'])
-        except Exception as e:
-            logger.warning('Falha ao limpar cache da sessão após timeout', session_id=sessao['id'], lead_id=lead_id, error=str(e))
-
-        logger.info("Sessão finalizada por timeout", lead_id=lead_id, session_id=sessao['id'])
-        
-        return {
-            'success': True,
-            'message': 'Sessão expirada - mensagem de timeout enviada',
-            'timeout': True
-        }
-    
-    def _registrar_mensagem(self, session_id: str, lead_id: str, conteudo: str, tipo: str, metadata: Dict[str, Any] = None):
-        """Registra mensagem no banco de dados"""
-        mensagem = Message(
-            session_id=session_id,
-            lead_id=lead_id,
-            conteudo=conteudo,
-            tipo=tipo,
-            metadata=metadata or {}
+    def _context_from_session(self, session: Dict[str, Any]) -> FlowContext:
+        raw = session.get('contexto') or {}
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                raw = {}
+        context = FlowContext(
+            first_name=raw.get('first_name', 'tudo bem'),
+            bot_messages=raw.get('bot_messages', 0),
+            responses=raw.get('responses', {}) or {},
+            lead_id=raw.get('lead_id') or session.get('lead_id'),
+            qualified=raw.get('qualified'),
+            meeting_preference=raw.get('meeting_preference'),
         )
-        
-        self.message_repo.create_message(mensagem)
-    
-    def _obter_tipo_pergunta(self, numero_pergunta: int) -> str:
-        """Retorna o tipo da pergunta para validação"""
-        tipos = {
-            1: 'patrimonio',
-            2: 'objetivo', 
-            3: 'urgencia',
-            4: 'interesse'
+        return context
+
+    def normalizar_telefone(self, telefone: str) -> str:
+        try:
+            return self.whatsapp_service.normalizar_telefone(telefone)
+        except Exception:  # pylint: disable=broad-except
+            return telefone
+
+    @staticmethod
+    def _first_name(nome: Optional[str]) -> str:
+        if not nome:
+            return 'tudo bem'
+        primeiro = nome.strip().split()[0]
+        return primeiro or 'tudo bem'
+
+    CHANNEL_TEMPLATES = {
+        "ebook": "Oi {nome}! Aqui é da LDC Capital. Vi que baixou nosso e-book sobre investimentos internacionais, por isso estou entrando em contato. Podemos conversar rapidinho para entender seu perfil e ver se um diagnóstico financeiro gratuito te ajuda a dar o próximo passo?",
+        "youtube": "Oi {nome}! Aqui é da LDC Capital. Vi que chegou até nós pelo YouTube. Posso entender seu momento e, se fizer sentido, oferecer um diagnóstico financeiro gratuito com um especialista?",
+        "newsletter": "Oi {nome}! Aqui é da LDC Capital. Vi que você veio pela nossa newsletter. Podemos falar um pouco sobre seus objetivos e, se fizer sentido, agendo um diagnóstico financeiro gratuito?",
+        "instagram": "Oi {nome}! Aqui é da LDC Capital. Vi que nos encontrou pelo Instagram. Posso entender seus objetivos e te oferecer um diagnóstico financeiro gratuito?",
+        "linkedin": "Oi {nome}! Aqui é da LDC Capital. Vi que chegou pelo LinkedIn. Posso entender seu momento e te oferecer um diagnóstico financeiro gratuito?",
+        "site": "Oi {nome}! Aqui é da LDC Capital. Vi que chegou pelo nosso site. Podemos falar rapidinho e, se fizer sentido, marco um diagnóstico financeiro gratuito?",
+        "indicacao": "Oi {nome}! Aqui é da LDC Capital. Recebemos sua indicação. Posso entender seus objetivos e te oferecer um diagnóstico financeiro gratuito?",
+        "default": "Oi {nome}! Aqui é da LDC Capital. Recebemos seu contato. Posso entender seu momento e, se fizer sentido, agendo um diagnóstico financeiro gratuito?",
+        "whatsapp": "Oi {nome}! Aqui é da LDC Capital. Obrigado por chamar a gente! Vou te fazer algumas perguntas rápidas para ver se um diagnóstico financeiro gratuito ajuda você agora, tudo bem?",
+    }
+
+    def _build_initial_message(
+        self,
+        context: FlowContext,
+        canal: str,
+        contexto_extra: Optional[str],
+        usar_template: bool,
+    ) -> str:
+        if not usar_template:
+            return self.flow.initial_message(context)
+
+        canal_key = (canal or "default").strip().lower()
+        template = self.CHANNEL_TEMPLATES.get(canal_key, self.CHANNEL_TEMPLATES["default"])
+        mensagem = template.format(nome=context.first_name)
+        if contexto_extra:
+            mensagem += f" Vi aqui: {contexto_extra.strip()}."
+        return mensagem
+
+    def _render_custom_initial_message(
+        self,
+        mensagem_inicial: str,
+        context: FlowContext,
+        canal: Optional[str],
+        contexto_extra: Optional[str],
+    ) -> str:
+        base = (mensagem_inicial or "").strip()
+        if not base:
+            return ""
+
+        tokens = {
+            "nome": context.first_name,
+            "first_name": context.first_name,
+            "lead": context.first_name,
+            "canal": canal or "",
+            "origem": canal or "",
+            "origem_canal": canal or "",
+            "contexto": contexto_extra or "",
+            "contexto_extra": contexto_extra or "",
         }
-        return tipos.get(numero_pergunta, 'geral')
-    
-    def _mensagem_ja_processada(self, session_id: str, mensagem: str, segundos: int) -> bool:
-        """Verifica se a mesma mensagem já foi processada recentemente"""
+
         try:
-            from datetime import datetime, timezone, timedelta
-            
-            # Buscar mensagens recentes da sessão
-            mensagens = self.message_repo.get_session_messages(session_id)
-            
-            if not mensagens:
-                return False
-            
-            # Verificar se há mensagem idêntica nos últimos X segundos
-            limite_tempo = datetime.now(timezone.utc) - timedelta(seconds=segundos)
-            
-            for msg in reversed(mensagens):  # Mais recente primeiro
-                try:
-                    msg_time = datetime.fromisoformat(msg['created_at'].replace('Z', '+00:00'))
-                    
-                    # Se mensagem é muito antiga, parar busca
-                    if msg_time < limite_tempo:
-                        break
-                    
-                    # Se é mensagem recebida com mesmo conteúdo
-                    if (msg.get('tipo') == 'recebida' and 
-                        msg.get('conteudo', '').strip().lower() == mensagem.strip().lower()):
-                        return True
-                        
-                except Exception as e:
-                    logger.warning("Erro ao verificar timestamp de mensagem", error=str(e))
-                    continue
-            
-            return False
-            
-        except Exception as e:
-            logger.error("Erro ao verificar mensagem duplicada", error=str(e))
-            return False
-    
-    def _tem_mensagem_enviada_recente(self, session_id: str, segundos: int) -> bool:
-        """Verifica se há mensagem enviada recentemente para evitar spam"""
-        try:
-            from datetime import datetime, timezone, timedelta
-            
-            # Buscar mensagens da sessão
-            mensagens = self.message_repo.get_session_messages(session_id)
-            
-            if not mensagens:
-                return False
-            
-            # Verificar se há mensagem enviada nos últimos X segundos
-            limite_tempo = datetime.now(timezone.utc) - timedelta(seconds=segundos)
-            
-            for msg in reversed(mensagens):  # Mais recente primeiro
-                try:
-                    msg_time = datetime.fromisoformat(msg['created_at'].replace('Z', '+00:00'))
-                    
-                    # Se mensagem é muito antiga, parar busca
-                    if msg_time < limite_tempo:
-                        break
-                    
-                    # Se é mensagem enviada recente
-                    if msg.get('tipo') == 'enviada':
-                        return True
-                        
-                except Exception as e:
-                    logger.warning("Erro ao verificar timestamp de mensagem enviada", error=str(e))
-                    continue
-            
-            return False
-            
-        except Exception as e:
-            logger.error("Erro ao verificar mensagem enviada recente", error=str(e))
-            return False
+            rendered = base.format_map(_SafeFormatDict(tokens))
+        except Exception:  # pylint: disable=broad-except
+            rendered = base
 
-    def _verificar_integridade_lead(self, lead: dict, lead_id: str) -> bool:
-        """Verifica se o lead tem todos os dados necessários"""
-        try:
-            # Campos obrigatórios
-            campos_obrigatorios = ['telefone', 'nome']
-            
-            for campo in campos_obrigatorios:
-                valor = lead.get(campo)
-                if not valor or str(valor).strip() == '':
-                    logger.error(f"Campo obrigatório ausente ou vazio", 
-                               campo=campo, 
-                               valor=repr(valor),
-                               lead_id=lead_id)
-                    return False
-            
-            # Validação específica do telefone
-            telefone = lead.get('telefone')
-            if telefone is None or telefone == 'null' or str(telefone).strip() == '':
-                logger.error("Telefone inválido detectado", 
-                           telefone=repr(telefone),
-                           telefone_type=type(telefone).__name__,
-                           lead_id=lead_id)
-                return False
-                
-            logger.info("Verificação de integridade do lead aprovada", 
-                       lead_id=lead_id,
-                       telefone=telefone,
-                       nome=lead.get('nome'))
-            return True
-            
-        except Exception as e:
-            logger.error("Erro na verificação de integridade do lead", 
-                        error=str(e), 
-                        lead_id=lead_id)
-            return False
+        if context.first_name and context.first_name.lower() != "tudo bem":
+            rendered = self._personalize_generic_salutation(rendered, context.first_name)
 
+        if contexto_extra:
+            placeholder_present = re.search(r"\{contexto(_extra)?\}", base, re.IGNORECASE)
+            if not placeholder_present:
+                rendered = rendered.rstrip()
+                if rendered and rendered[-1].isalnum():
+                    rendered += "."
+                rendered += f" Vi aqui: {contexto_extra.strip()}."
 
+        return rendered.strip()
 
+    @staticmethod
+    def _personalize_generic_salutation(mensagem: str, first_name: str) -> str:
+        if not mensagem:
+            return mensagem
+
+        result = mensagem
+        patterns = [
+            r"amigo\s*\(a\)",
+            r"amiga",
+            r"amigo",
+        ]
+        for pattern in patterns:
+            result = re.sub(pattern, first_name, result, flags=re.IGNORECASE)
+        return result
+
+    def _format_offer_message(self, context: FlowContext) -> str:
+        nome = context.first_name
+        slots = self.agenda_slots[:3]
+        if len(slots) == 1:
+            slots_text = slots[0]
+        elif len(slots) == 2:
+            slots_text = f"{slots[0]} ou {slots[1]}"
+        else:
+            slots_text = f"{', '.join(slots[:-1])} ou {slots[-1]}"
+
+        mensagem = (
+            f"Entendi, {nome}. Posso agendar um diagnóstico financeiro gratuito com um especialista. "
+            f"Tenho {slots_text}. Algum funciona para você?"
+        )
+        if self.agenda_link:
+            mensagem += f" Se preferir outro horário, escolha aqui: {self.agenda_link}."
+        return mensagem
+
+    def _format_scheduling_prompt(self, context: FlowContext) -> str:
+        slots = self.agenda_slots[:3]
+        if len(slots) == 1:
+            sugestao = slots[0]
+        elif len(slots) == 2:
+            sugestao = f"{slots[0]} ou {slots[1]}"
+        else:
+            sugestao = f"{', '.join(slots[:-1])} ou {slots[-1]}"
+        mensagem = (
+            "Perfeito! Qual desses horários prefere para o diagnóstico gratuito? "
+            f"Posso reservar {sugestao}."
+        )
+        if self.agenda_link:
+            mensagem += f" Se nenhum servir, tem outros horários aqui: {self.agenda_link}."
+        return mensagem
+
+    def _format_confirmation_message(self, context: FlowContext) -> str:
+        preferencia = context.meeting_preference or 'horário a combinar'
+        mensagem = (
+            f"Anotado! Vou reservar {preferencia}. Um especialista da LDC Capital "
+            "confirma com você em instantes."
+        )
+        if self.agenda_link:
+            mensagem += f" Se precisar ajustar, use este link: {self.agenda_link}."
+        return mensagem

@@ -21,51 +21,53 @@ class WhatsAppService:
         self.api_key = os.getenv('WAHA_API_KEY')
         self.max_tentativas = int(os.getenv('MAX_TENTATIVAS_ENVIO', '3'))
         
-        # Mensagens personalizadas por canal
-        self.mensagens_iniciais = {
-            'youtube': """
-🎥 Olá! Vi que você se inscreveu através do nosso canal no YouTube!
+        self.identidade_base = (
+            "Aqui é a LDC Capital, consultoria independente do interior do RS. "
+            "Trabalhamos sem conflito de interesses em corretoras como XP, BTG e Avenue."
+        )
 
-Sou o assistente virtual da [EMPRESA] e estou aqui para te ajudar com um diagnóstico financeiro gratuito.
-
-Você tem alguns minutos para responder 4 perguntas rápidas? Vai me ajudar a entender melhor seu perfil e como posso te auxiliar! 😊
-            """.strip(),
-            
-            'newsletter': """
-📧 Oi! Vi que você acessou nossa newsletter!
-
-Sou o assistente virtual da [EMPRESA] e quero te oferecer algo especial: um diagnóstico financeiro personalizado e gratuito.
-
-São apenas 4 perguntas rápidas que vão me ajudar a entender seu perfil. Topas participar? 💰
-            """.strip(),
-            
-            'ebook': """
-📚 Olá! Vi que você baixou nosso e-book!
-
-Sou o assistente da [EMPRESA] e quero te ajudar ainda mais! Que tal um diagnóstico financeiro gratuito e personalizado?
-
-São só 4 perguntas que vão me ajudar a entender melhor seus objetivos. Vamos começar? 🚀
-            """.strip(),
-            
-            'meta_ads': """
-🎯 Oi! Obrigado por se inscrever através da nossa campanha!
-
-Sou o assistente virtual da [EMPRESA] e quero te oferecer um diagnóstico financeiro completamente gratuito.
-
-São apenas 4 perguntas rápidas para entender seu perfil. Você tem alguns minutos? 📈
-            """.strip(),
-            
-            'whatsapp': """
-Olá! Tudo bem? 😊
-
-Sou agente comercial da LDC Capital, uma consultoria independente de investimentos, e quero te ajudar!
-
-Mas antes preciso entender suas demandas e objetivos financeiros. Você tem alguns minutinhos para conversarmos sobre como melhorar seus investimentos?
-
-É rapidinho e pode fazer toda a diferença no seu futuro financeiro! 💰
-            """.strip()
+        self.mensagens_iniciais_contexto = {
+            'ebook_internacional': {
+                'origem': 'Vi que você baixou nosso material sobre investimentos internacionais.',
+                'pergunta': 'Você já investe fora do Brasil ou está avaliando começar?'
+            },
+            'planilha_financas': {
+                'origem': 'Notei que você baixou nossa planilha para organizar investimentos.',
+                'pergunta': 'Como você vem cuidando da carteira hoje?'
+            },
+            'parceria_indicacao': {
+                'origem': 'Recebemos sua indicação de {contexto}.',
+                'pergunta': 'Quem tem acompanhado seus investimentos atualmente?'
+            }
         }
-        
+
+        self.mensagens_iniciais_canal = {
+            'ebook': {
+                'origem': 'Vi que você baixou nosso e-book sobre investimentos internacionais.',
+                'pergunta': 'Você já diversificou parte do patrimônio lá fora ou quer entender as alternativas?'
+            },
+            'newsletter': {
+                'origem': 'Vi que você entrou para nossa newsletter.',
+                'pergunta': 'Quais temas de investimento estão mais no seu radar hoje?'
+            },
+            'youtube': {
+                'origem': 'Vi que você chegou até nós pelo nosso canal no YouTube.',
+                'pergunta': 'O que te chamou mais atenção por lá e como você investe hoje?'
+            },
+            'meta_ads': {
+                'origem': 'Recebemos seu cadastro pela campanha online.',
+                'pergunta': 'Você está buscando ajuda para estruturar ou revisar sua carteira agora?'
+            },
+            'whatsapp': {
+                'origem': 'Você abriu a conversa com a gente pelo WhatsApp.',
+                'pergunta': 'Quem vem acompanhando suas decisões de investimento hoje?'
+            },
+            'default': {
+                'origem': 'Quero entender em que fase você está com seus investimentos para ver como podemos ajudar.',
+                'pergunta': 'Você tem alguém te acompanhando hoje ou faz tudo por conta própria?'
+            }
+        }
+
         # Perguntas de qualificação
         self.perguntas = {
             1: """
@@ -133,8 +135,8 @@ Qual sua preferência? 🎯
             """.strip()
         }
     
-    def enviar_mensagem(self, telefone: str, mensagem: str, tentativa: int = 1) -> Dict[str, Any]:
-        """Envia mensagem via WAHA com sistema de retentativas."""
+    def enviar_mensagem(self, telefone: str, mensagem: str, tentativa: int = 1, conversa_count: int = 0) -> Dict[str, Any]:
+        """Envia mensagem via WAHA com sistema de retentativas e delay inteligente."""
 
         # Normaliza mensagem para string simples
         if not isinstance(mensagem, str):
@@ -154,10 +156,22 @@ Qual sua preferência? 🎯
             }
 
         try:
-            # Delay para evitar bloqueio do número (3-8 segundos aleatório)
+            # Delay inteligente baseado no número de mensagens da conversa
             import random
-            delay = random.uniform(3, 8)
-            logger.info("Aguardando delay antes do envio", delay_segundos=delay, telefone=telefone)
+
+            # Delay progressivo: mais mensagens = mais delay (mais humano)
+            base_delay = 5  # Mínimo 5 segundos
+            conversa_bonus = min(conversa_count * 0.5, 5)  # Até 5s extras baseado na conversa
+            max_delay = 15  # Máximo 15 segundos
+
+            delay_min = base_delay + conversa_bonus
+            delay_max = min(delay_min + 7, max_delay)
+            delay = random.uniform(delay_min, delay_max)
+
+            logger.info("Aguardando delay inteligente antes do envio",
+                       delay_segundos=round(delay, 2),
+                       telefone=telefone,
+                       conversa_count=conversa_count)
             time.sleep(delay)
             
             # 2. Limpeza e formatação segura do telefone
@@ -232,9 +246,9 @@ Qual sua preferência? 🎯
             # 🎯 SOLUÇÃO DEFINITIVA: Simular sucesso em qualquer erro
             return self._simular_envio_sucesso(telefone, mensagem)
     
-    def obter_mensagem_inicial(self, canal: str) -> str:
+    def obter_mensagem_inicial(self, canal: str, nome: Optional[str] = None, contexto_extra: Optional[str] = None) -> str:
         """Retorna mensagem inicial personalizada por canal"""
-        return self.mensagens_iniciais.get(canal, self.mensagens_iniciais['youtube'])
+        return self.montar_mensagem_inicial_personalizada(canal=canal, nome=nome, contexto_extra=contexto_extra)
     
     def obter_pergunta(self, numero_pergunta: int) -> str:
         """Retorna pergunta de qualificação"""
@@ -379,8 +393,73 @@ Mande qualquer mensagem para reativar nosso chat! 😊
         elif not telefone_limpo.startswith('55'):
             telefone_limpo = '55' + telefone_limpo
         
+
         return telefone_limpo
-    
+
+    def normalizar_telefone(self, telefone: str) -> str:
+        """Interface pública para normalizar números antes do envio."""
+        return self._limpar_telefone(telefone)
+
+    def _extrair_primeiro_nome(self, nome: Optional[str]) -> str:
+        """Retorna o primeiro nome capitalizado ou string vazia."""
+        if not nome:
+            return ''
+
+        partes = [p for p in str(nome).strip().split() if p]
+        if not partes:
+            return ''
+
+        primeiro = partes[0]
+        return primeiro[0].upper() + primeiro[1:] if len(primeiro) > 1 else primeiro.upper()
+
+    def _resolver_template_contexto(self, contexto_extra: Optional[str]):
+        """Seleciona template específico a partir do contexto informado."""
+        if not contexto_extra:
+            return None, ''
+
+        contexto_limpo = str(contexto_extra).strip()
+        chave = contexto_limpo.lower()
+
+        if chave in self.mensagens_iniciais_contexto:
+            return self.mensagens_iniciais_contexto[chave], contexto_limpo
+
+        for contexto_chave, template in self.mensagens_iniciais_contexto.items():
+            if contexto_chave in chave:
+                return template, contexto_limpo
+
+        return None, contexto_limpo
+
+    def montar_mensagem_inicial_personalizada(
+        self,
+        canal: str,
+        nome: Optional[str] = None,
+        contexto_extra: Optional[str] = None
+    ) -> str:
+        """Monta saudação inicial contextualizada para o lead."""
+        canal_chave = (canal or '').strip().lower()
+
+        template_contexto, contexto_texto = self._resolver_template_contexto(contexto_extra)
+        if template_contexto:
+            origem = template_contexto.get('origem', '').format(contexto=contexto_texto)
+            pergunta = template_contexto.get('pergunta', '').format(contexto=contexto_texto)
+        else:
+            template_canal = self.mensagens_iniciais_canal.get(canal_chave) or self.mensagens_iniciais_canal['default']
+            origem = template_canal.get('origem', '').format(contexto=contexto_texto)
+            pergunta = template_canal.get('pergunta', '').format(contexto=contexto_texto)
+
+        primeiro_nome = self._extrair_primeiro_nome(nome)
+        saudacao = f"Oi {primeiro_nome}, tudo bem?" if primeiro_nome else 'Oi, tudo bem?'
+
+        partes = [
+            saudacao.strip(),
+            self.identidade_base.strip(),
+            origem.strip(),
+            pergunta.strip()
+        ]
+
+        mensagem = ' '.join(parte for parte in partes if parte)
+        return mensagem.strip()
+
     def verificar_status_sessao(self) -> Dict[str, Any]:
         """Verifica status da sessão WAHA"""
         try:

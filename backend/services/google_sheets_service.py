@@ -7,7 +7,7 @@ Serviço para integração completa com Google Sheets
 import os
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 
 try:
@@ -71,6 +71,63 @@ class GoogleSheetsService:
             logger.error("Erro ao inicializar Google Sheets", error=str(e))
             self.service = None
     
+
+    def read_input_sheet(self) -> Tuple[List[str], List[List[str]]]:
+        """Return headers and rows for the configured input sheet."""
+        if not self.service or not self.input_sheets_id:
+            return [], []
+        result = self.service.spreadsheets().values().get(
+            spreadsheetId=self.input_sheets_id,
+            range=self.input_range
+        ).execute()
+        values = result.get('values', [])
+        if not values:
+            return [], []
+        headers = values[0]
+        rows = values[1:] if len(values) > 1 else []
+        return headers, rows
+
+    def update_input_row(
+        self,
+        row_number: int,
+        header: List[str],
+        original_row: List[str],
+        updates: Dict[str, Any],
+    ) -> None:
+        """Apply updates to a specific row on the input sheet."""
+        if not self.service or not self.input_sheets_id:
+            return
+        row_values = self._expand_row(list(original_row), len(header))
+        for key, value in updates.items():
+            if key in header:
+                idx = header.index(key)
+                row_values[idx] = value
+        sheet_name, _ = self._parse_input_range()
+        end_col = chr(ord('A') + len(header) - 1)
+        range_name = f"{sheet_name}!A{row_number}:{end_col}{row_number}"
+        self.service.spreadsheets().values().update(
+            spreadsheetId=self.input_sheets_id,
+            range=range_name,
+            valueInputOption='RAW',
+            body={'values': [row_values]}
+        ).execute()
+
+    def _parse_input_range(self) -> Tuple[str, int]:
+        if '!' in self.input_range:
+            sheet_name, cell_range = self.input_range.split('!', 1)
+        else:
+            sheet_name, cell_range = self.input_range, 'A1'
+        start_cell = cell_range.split(':')[0]
+        digits = ''.join(ch for ch in start_cell if ch.isdigit())
+        start_row = int(digits) if digits else 1
+        return sheet_name, start_row
+
+    @staticmethod
+    def _expand_row(row: List[str], size: int) -> List[str]:
+        if len(row) < size:
+            row = row + [''] * (size - len(row))
+        return row
+
     # ========== ENTRADA DE LEADS ==========
     
     def detectar_novos_leads(self) -> Dict[str, Any]:
@@ -169,13 +226,13 @@ class GoogleSheetsService:
     def _processar_lead_entrada(self, lead_data: Dict[str, Any]) -> Dict[str, Any]:
         """Processa um lead da planilha de entrada"""
         try:
-            from backend.models.database_models import DatabaseConnection, LeadRepository
+            from backend.models.database_models import DatabaseConnection, LeadRepository, Lead
             from backend.services.qualification_service import QualificationService
             from backend.services.whatsapp_service import WhatsAppService
             from backend.models.database_models import (
                 SessionRepository, MessageRepository, QualificacaoRepository
             )
-            from backend.services.scoring_service import ScoringService
+            from backend.services.messaging_service import MessagingService
             
             # Inicializar repositórios
             db_conn = DatabaseConnection()
@@ -186,12 +243,16 @@ class GoogleSheetsService:
             
             # Inicializar serviços
             whatsapp_service = WhatsAppService()
-            scoring_service = ScoringService()
+            messaging_service = MessagingService(whatsapp_service, message_repo)
             qualification_service = QualificationService(
-                session_repo, message_repo, qualificacao_repo, 
-                scoring_service, whatsapp_service
+                lead_repo,
+                session_repo,
+                message_repo,
+                qualificacao_repo,
+                messaging_service,
+                whatsapp_service,
             )
-            
+
             # Verificar se lead já existe
             existing_lead = lead_repo.get_lead_by_phone(lead_data['telefone'])
             if existing_lead:
@@ -201,24 +262,29 @@ class GoogleSheetsService:
                 }
             
             # Criar lead
-            lead_id = lead_repo.create_lead(
+            novo_lead = Lead(
                 nome=lead_data['nome'],
                 telefone=lead_data['telefone'],
                 email=lead_data.get('email', ''),
-                canal=lead_data.get('canal', 'planilha')
+                canal=lead_data.get('canal', 'planilha'),
             )
-            
-            if not lead_id:
+            created_lead = lead_repo.create_lead(novo_lead)
+
+            if not created_lead:
                 return {
                     'success': False,
                     'error': 'Erro ao criar lead no banco'
                 }
-            
+
+            lead_id = created_lead['id']
+
             # Iniciar qualificação via WhatsApp
             resultado = qualification_service.iniciar_qualificacao(
                 lead_id=lead_id,
                 telefone=lead_data['telefone'],
-                canal=lead_data.get('canal', 'planilha')
+                nome=lead_data.get('nome'),
+                origem_canal=lead_data.get('canal', 'planilha'),
+                contexto_extra=lead_data.get('contexto')
             )
             
             return resultado

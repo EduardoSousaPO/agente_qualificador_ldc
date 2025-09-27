@@ -69,3 +69,4 @@ logs/
 
 # Build artifacts
 .nixpacks/
+google_credentials.json
